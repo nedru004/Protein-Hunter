@@ -1,6 +1,7 @@
 import random
 import tempfile
 import os
+import copy
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Optional, List, Tuple, Dict, Union, Any
@@ -90,7 +91,15 @@ from chai_lab.data.features.feature_type import FeatureType
 def copy_dict_of_tensors(d):
     if d is None:
         return None
-    return {k: v.clone() if isinstance(v, Tensor) else v for k, v in d.items()}
+    out = {}
+    for k, v in d.items():
+        if isinstance(v, Tensor):
+            out[k] = v.detach().clone()
+        elif isinstance(v, dict):
+            out[k] = copy_dict_of_tensors(v)
+        else:
+            out[k] = v
+    return out
 
 
 @dataclass
@@ -109,7 +118,7 @@ class FoldingState:
         """Deep copy state for saving/restoring"""
         
         return FoldingState(
-            feature_context=self.feature_context,
+            feature_context=copy.deepcopy(self.feature_context),
             batch=copy_dict_of_tensors(self.batch),
             model_size=self.model_size,
             init_reps=copy_dict_of_tensors(self.init_reps),
@@ -724,8 +733,7 @@ class ChaiFolder:
                 result = self._score(padded_coords, reps_gpu)
                 if best_result is None or result["ranking_score"] > best_result["ranking_score"]:
                     best_result = result
-                    atom_mask = inputs["atom_exists_mask"].squeeze(0)
-                    best_result['coords'] = padded_coords.squeeze(0)[atom_mask].cpu()
+                    best_result['coords'] = padded_coords.squeeze(0).cpu() # <-- MODIFIED: [atom_mask] removed
                 
 
             self.state.result = best_result
@@ -804,7 +812,7 @@ class ChaiFolder:
             return n / d
         plddt_scores = avg_per_token_1d(plddt_scores_atom.squeeze())
         return dict(
-            plddt_per_atom=plddt_scores_atom.squeeze()[atom_mask].cpu(),
+            plddt_per_atom=plddt_scores_atom.squeeze().cpu(), # <-- MODIFIED: [atom_mask] removed
             plddt=plddt_scores,
             pae=pae_scores.squeeze(),
             pde=pde.squeeze(),
@@ -878,30 +886,33 @@ class ChaiFolder:
 
     def _save_structure(self, result_item: dict, out_path: Path,
                         use_entity_names_as_chain_ids: bool = True) -> Path:
-        coords = result_item["coords"]
+        
+        coords = result_item["coords"].to(torch.float32).cpu()
         if coords.dim() == 2:
-            coords = coords.unsqueeze(0)
+            coords = coords.unsqueeze(0) # Shape [1, n_padded_atoms, 3]
         elif coords.dim() == 3 and coords.shape[0] != 1:
             coords = coords[:1]
-        coords = coords.to(torch.float32)
-
+        
         plddt = result_item.get("plddt_per_atom", None)
         bfactors = None
         if plddt is not None:
             if plddt.dim() != 1:
                 plddt = plddt.view(-1)
+            # Reshape to [1, n_padded_atoms]
             bfactors = (plddt * 100.0).unsqueeze(0).to(torch.float32)
 
         output_inputs = move_data_to_device(self.state.batch["inputs"], self.cpu_device)
-        ctx = pdb_context_from_batch(output_inputs)
-        asym_ids = sorted(ctx.asym_id2entity_type.keys())
-
+        
         if use_entity_names_as_chain_ids:
-            desired = [ch.entity_data.entity_name for ch in self.state.feature_context.chains]
-            mapping = {asym_id: (desired[i] if i < len(desired) else get_chain_letter(i + 1))
-                       for i, asym_id in enumerate(asym_ids)}
+            mapping = {
+                i: chain.entity_data.entity_name
+                for i, chain in enumerate(self.state.feature_context.chains, start=1)
+            }
         else:
-            mapping = {asym_id: get_chain_letter(i + 1) for i, asym_id in enumerate(asym_ids)}
+            mapping = {
+                i: get_chain_letter(i)
+                for i, chain in enumerate(self.state.feature_context.chains, start=1)
+            }        
 
         out_path = Path(out_path)
         out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -909,7 +920,7 @@ class ChaiFolder:
             coords=coords.cpu(),
             output_batch=output_inputs,
             write_path=out_path,
-            asym_entity_names=mapping,
+            asym_entity_names=mapping, # Pass the correct mapping
             bfactors=None if bfactors is None else bfactors.cpu(),
         )
         return out_path
