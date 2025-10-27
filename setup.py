@@ -14,7 +14,7 @@ import os
 
 # Read README for long description
 README = Path(__file__).parent / "README.md"
-long_description = README.read_text(encoding="utf-8") if README.exists() else "ProteinHunter"
+long_description = README.read_text(encoding="utf-8") if README.exists() else "ProteinHunter - Boltz Design Environment"
 
 # Package metadata
 PACKAGE_NAME = "proteinhunter"
@@ -198,17 +198,17 @@ class PostInstallCommand:
                 [
                     sys.executable, "-m", "ipykernel", "install",
                     "--user",
-                    "--name=proteinhunter",
-                    "--display-name=Protein Hunter"
+                    "--name=boltz_ph",
+                    "--display-name=Boltz Protein Hunter"
                 ],
                 check=True
             )
-            print("✅ Jupyter kernel 'Protein Hunter' installed")
+            print("✅ Jupyter kernel 'Boltz Protein Hunter' installed")
             return True
         except Exception as e:
             print(f"⚠️  Warning: Failed to setup Jupyter kernel: {e}")
             print("You can set it up manually later with:")
-            print("python -m ipykernel install --user --name=proteinhunter --display-name='Protein Hunter'")
+            print("python -m ipykernel install --user --name=boltz_ph --display-name='Boltz Protein Hunter'")
             return False
     
     @staticmethod
@@ -297,12 +297,14 @@ class PostInstallCommand:
         print("="*60)
         
         print("\n📖 Next Steps:")
-        print("  1. Verify installation:")
+        print("  1. Run setup command:")
+        print("     proteinhunter-setup")
+        print("  2. Or verify installation:")
         print("     python -c 'import boltz; print(\"ProteinHunter ready!\")'")
-        print("  2. Start using Jupyter:")
+        print("  3. Start using Jupyter:")
         print("     jupyter notebook")
-        print("     (Select kernel: 'Protein Hunter')")
-        print("  3. Check documentation:")
+        print("     (Select kernel: 'Boltz Protein Hunter')")
+        print("  4. Check documentation:")
         print("     python -c 'from boltz import __doc__; print(__doc__)'")
         
         if not results.get('pyrosetta', True):
@@ -316,16 +318,31 @@ class PostDevelopCommand(develop):
     def run(self):
         develop.run(self)
         print("\n🔧 Running post-installation setup for development mode...")
-        PostInstallCommand.run_all_setup(include_pyrosetta=True, interactive=True)
+        PostInstallCommand.run_all_setup(include_pyrosetta=False, interactive=False)
+        print("\n💡 To complete setup, run: proteinhunter-setup")
 
 
 class PostInstallCommandWrapper(install):
     """Post-installation for normal install"""
     def run(self):
         install.run(self)
-        print("\n🔧 Running post-installation setup...")
-        # Non-interactive for pip install
-        PostInstallCommand.run_all_setup(include_pyrosetta=False, interactive=False)
+        # Show post-install message
+        print("\n" + "="*60)
+        print("✅ ProteinHunter base installation complete!")
+        print("="*60)
+        print("\n⚠️  IMPORTANT: Run post-installation setup:")
+        print("  proteinhunter-setup")
+        print("\nThis will:")
+        print("  • Download Boltz model weights")
+        print("  • Setup DAlphaBall executable")
+        print("  • Configure Jupyter kernel")
+        print("  • Setup LigandMPNN (if present)")
+        print("  • Optionally install PyRosetta")
+        print("\nOr run specific setup:")
+        print("  proteinhunter-setup --weights-only    # Just download weights")
+        print("  proteinhunter-setup --no-pyrosetta    # Skip PyRosetta")
+        print("  proteinhunter-setup --jupyter-kernel  # Just Jupyter kernel")
+        print("="*60 + "\n")
 
 
 # Main setup configuration
@@ -374,6 +391,75 @@ setup(
 def main():
     """Entry point for manual post-installation setup"""
     PostInstallCommand.run_all_setup(include_pyrosetta=True, interactive=True)
+
+
+def cli_main():
+    """CLI entry point with argument parsing"""
+    import argparse
+    
+    parser = argparse.ArgumentParser(
+        description="ProteinHunter - Post-installation setup",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  proteinhunter-setup                    # Run full setup with prompts
+  proteinhunter-setup --no-pyrosetta     # Skip PyRosetta installation
+  proteinhunter-setup --non-interactive  # Run without prompts
+  proteinhunter-setup --weights-only     # Only download Boltz weights
+        """
+    )
+    
+    parser.add_argument(
+        '--no-pyrosetta',
+        action='store_true',
+        help='Skip PyRosetta installation'
+    )
+    
+    parser.add_argument(
+        '--non-interactive',
+        action='store_true',
+        help='Run setup without interactive prompts'
+    )
+    
+    parser.add_argument(
+        '--weights-only',
+        action='store_true',
+        help='Only download Boltz model weights'
+    )
+    
+    parser.add_argument(
+        '--jupyter-kernel',
+        action='store_true',
+        help='Only setup Jupyter kernel'
+    )
+    
+    parser.add_argument(
+        '--version',
+        action='version',
+        version='ProteinHunter 1.0.0'
+    )
+    
+    args = parser.parse_args()
+    
+    # Handle specific commands
+    if args.weights_only:
+        print("⬇️  Downloading Boltz weights only...")
+        PostInstallCommand.download_boltz_weights()
+        return
+    
+    if args.jupyter_kernel:
+        print("📓 Setting up Jupyter kernel only...")
+        PostInstallCommand.setup_jupyter_kernel()
+        return
+    
+    # Run full setup
+    include_pyrosetta = not args.no_pyrosetta
+    interactive = not args.non_interactive
+    
+    PostInstallCommand.run_all_setup(
+        include_pyrosetta=include_pyrosetta,
+        interactive=interactive
+    )
 
 
 if __name__ == "__main__":
