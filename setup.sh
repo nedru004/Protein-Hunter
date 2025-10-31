@@ -22,13 +22,13 @@ conda activate proteinhunter
 # ------------------------------------------------------------------------------
 # 3️⃣ Install Boltz
 # ------------------------------------------------------------------------------
-if [ -d "boltz" ]; then
+if [ -d "boltz_ph" ]; then
     echo "📂 Installing Boltz..."
-    cd boltz
+    cd boltz_ph
     pip install -e .
     cd ..
 else
-    echo "❌ boltz directory not found. Please run this script from the project root."
+    echo "❌ boltz_ph directory not found. Please run this script from the project root."
     exit 1
 fi
 
@@ -93,7 +93,7 @@ fi
 # ------------------------------------------------------------------------------
 # 🔟 Make DAlphaBall.gcc executable
 # ------------------------------------------------------------------------------
-chmod +x "boltz/utils/DAlphaBall.gcc" || { echo "Error: Failed to chmod DAlphaBall.gcc"; exit 1; }
+chmod +x "boltz_ph/utils/DAlphaBall.gcc" || { echo "Error: Failed to chmod DAlphaBall.gcc"; exit 1; }
 
 # ------------------------------------------------------------------------------
 # 1️⃣1️⃣ Install Chai Lab (NEW SECTION)
