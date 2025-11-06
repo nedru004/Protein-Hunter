@@ -100,6 +100,7 @@ def parse_args():
         default="~/.conda/envs/alphafold3_venv",
         type=str,
     )
+    parser.add_argument("--use_alphafold3_validation", action="store_true", default=False)
     parser.add_argument("--use_msa_for_af3", action="store_true")
     parser.add_argument("--work_dir", default="", type=str)
 

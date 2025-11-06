@@ -120,7 +120,6 @@ def extract_viewer_metadata(batch_inputs, token_mask=None):
     # Get token-level metadata
     token_asym_id = batch_inputs["token_asym_id"].squeeze(0).cpu().numpy()
     token_entity_type = batch_inputs["token_entity_type"].squeeze(0).cpu().numpy()
-
     # Apply mask if provided
     if token_mask is not None:
         token_mask_np = (
@@ -947,13 +946,12 @@ class ChaiFolder:
                 coords = (
                     denoised_pos.squeeze(0).cpu()[bb_idx_cpu][:, 1, :].float().numpy()
                 )
-
                 # Extract chain IDs and atom types for proper visualization
                 token_mask_cpu = self.state.batch_inputs["token_exists_mask"].squeeze(0)
+    
                 chains, atom_types = extract_viewer_metadata(
                     self.state.batch_inputs, token_mask_cpu
                 )
-
                 viewer.add(coords, chains=chains, atom_types=atom_types)
 
         return atom_pos

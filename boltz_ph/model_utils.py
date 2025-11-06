@@ -716,4 +716,4 @@ def plot_run_metrics(
     plt.tight_layout()
     plot_filename = f"{name}_run_{run_id}_design_cycle_results.png"
     plt.savefig(f"{run_save_dir}/{plot_filename}", dpi=300)
-    plt.show()
+    plt.show(block=False)

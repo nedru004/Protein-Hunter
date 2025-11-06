@@ -58,8 +58,16 @@ This will take you from an initial input to final designed protein structures an
 
 > 💡 **Tips:** The original evaluation in the paper used an all-X sequence for initial design. However, to increase the diversity of generated folds, you can mix random amino acids with X residues by setting the `percent_X` parameter (e.g., `--percent_X 50` for 50% X and 50% random AAs). Adjusting this ratio helps explore a broader design space.
 
-## Protein Hunter (Boltz Edition ⚡) 
 
+⚠️ **Warning**: To run the AlphaFold3 cross-validation pipeline, you need to specify your AlphaFold3 directory, Docker name, database settings, and conda environment in the configuration. These can be set using the following arguments:
+- `--alphafold_dir`: Path to your AlphaFold3 installation (default: ~/alphafold3)
+- `--af3_docker_name`: Name of your AlphaFold3 Docker container
+- `--af3_database_settings`: Path to AlphaFold3 database
+- `--af3_hmmer_path`: Path to HMMER
+- `--use_alphafold3_validation`: Add this flag to enable AlphaFold3-based validation. 
+
+## Protein Hunter (Boltz Edition ⚡) 
+To use AlphaFold3 validation, make sure your AlphaFold3 Docker is installed, specify the correct AlphaFold3 directory, and turn on `--use_alphafold3_validation`.
 - **Protein-protein design:**  
   To design a protein-protein complex, run:  
   ```
@@ -93,25 +101,24 @@ This will take you from an initial input to final designed protein structures an
 - **Unconditional protein design:**  
   Generate de novo proteins of a desired length:
   ```
-  python chai_ph/design.py --jobname unconditional_design --length 120 --percent_X 0 --seq "" --target_seq ACDEFGHIKLMNPQRSTVWY --cyclic --n_trials 1 --n_cycles 5 --n_recycles 3 --n_diff_steps 200 --hysteresis_mode templates --repredict --omit_aa "" --temperature 0.1 --scale_temp_by_plddt --render_freq 100 --gpu_id 2
-  ```
+  python chai_ph/design.py --jobname unconditional_design --length 120 --percent_X 0 --seq "" --target_seq ACDEFGHIKLMNPQRSTVWY --cyclic --n_trials 1 --n_cycles 5 --n_recycles 3 --n_diff_steps 200 --hysteresis_mode templates --repredict --omit_aa "" --temperature 0.1 --scale_temp_by_plddt --render_freq 100 --gpu_id 2 --plot
 
 - **Protein binder design:**  
   To design a binder for a specific protein target (e.g., PDL1):
   ```
-  python chai_ph/design.py --jobname PDL1_binder --length 120 --percent_X 50 --seq "" --target_seq AFTVTVPKDLYVVEYGSNMTIECKFPVEKQLDLAALIVYWEMEDKNIIQFVHGEEDLKVQHSSYRQRARLLKDQLSLGNAALQITDVKLQDAGVYRCMISYGGADYKRITVKVNAPYAAALE --n_trials 1 --n_cycles 5 --n_recycles 3 --n_diff_steps 200 --hysteresis_mode templates --repredict --omit_aa "" --temperature 0.1 --scale_temp_by_plddt --render_freq 100 --gpu_id 2
+  python chai_ph/design.py --jobname PDL1_binder --length 120 --percent_X 50 --seq "" --target_seq AFTVTVPKDLYVVEYGSNMTIECKFPVEKQLDLAALIVYWEMEDKNIIQFVHGEEDLKVQHSSYRQRARLLKDQLSLGNAALQITDVKLQDAGVYRCMISYGGADYKRITVKVNAPYAAALE --n_trials 1 --n_cycles 5 --n_recycles 3 --n_diff_steps 200 --hysteresis_mode templates --repredict --omit_aa "" --temperature 0.1 --scale_temp_by_plddt --render_freq 100 --gpu_id 2 --use_msa_for_af3 --plot
   ```
 
 - **Cyclic protein binder design:**  
   Design a cyclic peptide binder for a specific protein target:
   ```
-  python chai_ph/design.py --jobname PDL1_cyclic_binder --length 120 --percent_X 50 --seq "" --cyclic --target_seq AFTVTVPKDLYVVEYGSNMTIECKFPVEKQLDLAALIVYWEMEDKNIIQFVHGEEDLKVQHSSYRQRARLLKDQLSLGNAALQITDVKLQDAGVYRCMISYGGADYKRITVKVNAPYAAALE --n_trials 1 --n_cycles 5 --n_recycles 3 --n_diff_steps 200 --hysteresis_mode templates --repredict --omit_aa "" --temperature 0.1 --scale_temp_by_plddt --render_freq 100 --gpu_id 2
+  python chai_ph/design.py --jobname PDL1_cyclic_binder --length 120 --percent_X 50 --seq "" --cyclic --target_seq AFTVTVPKDLYVVEYGSNMTIECKFPVEKQLDLAALIVYWEMEDKNIIQFVHGEEDLKVQHSSYRQRARLLKDQLSLGNAALQITDVKLQDAGVYRCMISYGGADYKRITVKVNAPYAAALE --n_trials 1 --n_cycles 5 --n_recycles 3 --n_diff_steps 200 --hysteresis_mode templates --repredict --omit_aa "" --temperature 0.1 --scale_temp_by_plddt --render_freq 100 --gpu_id 2 --use_msa_for_af3 --plot
   ```
 
 - **Small molecule (ligand) binder design:**  
   To design a protein binder for a small molecule or ligand (SMILES string as target):
   ```
-  python chai_ph/design.py --jobname ligand_binder --length 120 --percent_X 0 --seq "" --target_seq O=C(NCc1cocn1)c1cnn(C)c1C(=O)Nc1ccn2cc(nc2n1)c1ccccc1 --n_trials 1 --n_cycles 5 --n_recycles 3 --n_diff_steps 200 --hysteresis_mode esm --repredict --omit_aa "" --temperature 0.01 --scale_temp_by_plddt --render_freq 100 --gpu_id 2
+  python chai_ph/design.py --jobname ligand_binder --length 120 --percent_X 0 --seq "" --target_seq O=C(NCc1cocn1)c1cnn(C)c1C(=O)Nc1ccn2cc(nc2n1)c1ccccc1 --n_trials 1 --n_cycles 5 --n_recycles 3 --n_diff_steps 200 --hysteresis_mode esm --repredict --omit_aa "" --temperature 0.01 --scale_temp_by_plddt --render_freq 100 --gpu_id 2 --plot
   ```
 
 ## 2️⃣ Refine your own designs!
@@ -123,11 +130,7 @@ For example, you can generate a design using Boltzgen, take the final output, an
 
 ---
 
-⚠️ **Warning**: To run the AlphaFold3 cross-validation pipeline, you need to specify your AlphaFold3 directory, Docker name, database settings, and conda environment in the configuration. These can be set using the following arguments:
-- `--alphafold_dir`: Path to your AlphaFold3 installation (default: ~/alphafold3)
-- `--af3_docker_name`: Name of your AlphaFold3 Docker container
-- `--af3_database_settings`: Path to AlphaFold3 database
-- `--af3_hmmer_path`: Path to HMMER
+
 
 
 ## 🎥 Trajectory Visualization
@@ -143,7 +146,11 @@ Final structures are validated using **AlphaFold3** for:
 
 ## 🎯 Successful Designs
 
-After running the pipeline in `run_protein_hunter.py`, high-confidence designs can be found in:
+After running the pipeline with `run_protein_hunter.py`, high-confidence designs can be found in:
+
+`your_output_folder/high_iptm_yaml`
+
+After running AlphaFold3, the validated structures are saved in:
 
 `your_output_folder/03_af_pdb_success`
 

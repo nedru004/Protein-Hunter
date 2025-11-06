@@ -74,7 +74,7 @@ python << 'PYCODE'
 import sys
 import os
 # Ensure boltz is importable
-sys.path.insert(0, os.path.join(os.getcwd(), 'boltz', 'src'))
+sys.path.insert(0, os.path.join(os.getcwd(), 'boltz_ph'))
 
 try:
     from boltz.main import download_boltz2

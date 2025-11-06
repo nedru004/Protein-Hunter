@@ -2,6 +2,7 @@ import os
 import numpy as np
 import yaml
 import torch
+import csv
 import gc
 import re
 import sys
@@ -10,20 +11,6 @@ import matplotlib.pyplot as plt
 from matplotlib.ticker import MaxNLocator
 from chai_lab.chai1 import _bin_centers
 from typing import Optional
-# Refactored imports
-# from chai_ph.predict import ChaiFolder
-# from chai_ph.helpers import (
-#     sample_seq,
-#     extract_sequence_from_pdb,
-#     clean_protein_sequence,
-#     is_smiles,
-#     get_backbone_coords_from_result,
-#     prepare_refinement_coords,
-#     compute_ca_rmsd,
-# )
-# from typing import Optional
-# from LigandMPNN.wrapper import LigandMPNNWrapper
-
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 from chai_ph.predict import ChaiFolder
 from chai_ph.helpers import (
@@ -36,38 +23,16 @@ from chai_ph.helpers import (
     compute_ca_rmsd,
 )
 from LigandMPNN.wrapper import LigandMPNNWrapper
-from utils.alphafold_utils import run_alphafold_step
-
-
-# import os
-# import numpy as np
-# import yaml
-# import torch
-# import random
-# from torch import Tensor
-# import gemmi
-# from chai_lab.chai1 import _bin_centers
-# from chai_lab.data.parsing.structure.entity_type import EntityType
-# from typing import Optional
-# import gc
-# import sys
-# import re
-# import py2Dmol
-# import matplotlib.pyplot as plt
-# from matplotlib.ticker import MaxNLocator
-
-# sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
-# from chai_ph.predict import ChaiFolder
-# from LigandMPNN.wrapper import LigandMPNNWrapper
-# from utils.alphafold_utils import run_alphafold_step
 
 def optimize_protein_design(
     folder: ChaiFolder,
     designer: LigandMPNNWrapper,
     initial_seq: str,
+    binder_chain: str = "A",
     target_seq: Optional[str] = None,
     target_pdb: Optional[str] = None,
-    target_chain: Optional[str] = None,
+    target_chain: Optional[str] = "B",
+    target_pdb_chain: Optional[str] = None,
     binder_mode: str = "protein",
     prefix: str = "test",
     n_steps: int = 5,
@@ -94,20 +59,22 @@ def optimize_protein_design(
     render_freq: int = 1,
     plot: bool = False,
 ):
+
     """
     Optimize protein design through iterative folding and sequence design.
-
+    Now also saves all cycle metrics to summary_all_runs.csv (outside run folder, one row per run).
     """
 
     high_iptm_dir = os.path.join(os.path.dirname(str(prefix)), "high_iptm_yaml")
+
     # Extract target sequence from PDB if not provided
     if target_pdb is not None and target_seq is None:
-        if target_chain is None:
-            raise ValueError("target_chain must be specified when using target_pdb")
-        target_seq = extract_sequence_from_pdb(target_pdb, target_chain)
+        if target_pdb_chain is None:
+            raise ValueError("target_pdb_chain must be specified when using target_pdb")
+        target_seq = extract_sequence_from_pdb(target_pdb, target_pdb_chain)
         if verbose:
             print(
-                f"{prefix} | Extracted target sequence from {target_pdb} chain {target_chain}: {target_seq[:60]}..."
+                f"{prefix} | Extracted target sequence from {target_pdb} chain {target_pdb_chain}: {target_seq[:60]}..."
             )
 
     # Detect target type
@@ -118,6 +85,10 @@ def optimize_protein_design(
     is_binder_design = target_seq is not None
     mpnn_model_type = "ligand_mpnn" if is_ligand_target else "soluble_mpnn"
     target_entity_type = "ligand" if is_ligand_target else "protein"
+    if is_binder_design:
+        use_entity_names = [binder_chain, target_chain]
+    else:
+        use_entity_names = [binder_chain]
 
     # Calculate PDE bins
     bin_centers = _bin_centers(0.0, 32.0, 64)
@@ -135,7 +106,7 @@ def optimize_protein_design(
     def compute_pae_metrics(pae, n_target):
         """Compute PAE and iPAE"""
         if not is_binder_design:
-            return {"pae": pae.mean().item(), "ipae": None}
+            return {'pae': pae.mean().item(), 'ipae': None}
 
         mean_pae = pae.mean().item()
         if is_ligand_target:
@@ -146,7 +117,7 @@ def optimize_protein_design(
             binder_to_target = pae[n_target:, :n_target].mean().item()
 
         ipae = (target_to_binder + binder_to_target) / 2
-        return {"pae": mean_pae, "ipae": ipae}
+        return {'pae': mean_pae, 'ipae': ipae}
 
     def compute_template_weight(prev_pde, n_target):
         """Compute PDE-based template weight"""
@@ -156,15 +127,9 @@ def optimize_protein_design(
         else:
             n_total = prev_pde.shape[0]
             weight = torch.ones(n_total, n_total)
-            weight[n_target:, n_target:] = prev_pde[
-                n_target:, n_target:, :pde_bins_intra
-            ].sum(-1)
-            weight[:n_target, n_target:] = prev_pde[
-                :n_target, n_target:, :pde_bins_inter
-            ].sum(-1)
-            weight[n_target:, :n_target] = prev_pde[
-                n_target:, :n_target, :pde_bins_inter
-            ].sum(-1)
+            weight[n_target:, n_target:] = prev_pde[n_target:, n_target:, :pde_bins_intra].sum(-1)
+            weight[:n_target, n_target:] = prev_pde[:n_target, n_target:, :pde_bins_inter].sum(-1)
+            weight[n_target:, :n_target] = prev_pde[n_target:, :n_target, :pde_bins_inter].sum(-1)
 
         return weight
 
@@ -172,6 +137,21 @@ def optimize_protein_design(
         """Fold sequence and return metrics"""
         chains = []
         if is_binder_design:
+            # Binder chain
+            align_binder_weight = 10.0 if align_to == "binder" else 1.0
+            binder_opts = {
+                "use_esm": use_esm,
+                "cyclic": cyclic,
+                "align": align_binder_weight,
+            }
+            if not is_first_iteration:
+                binder_opts.update(
+                    {
+                        "template_pdb": prev["pdb"],
+                        "template_chain_id": binder_chain,
+                        "randomize_template_sequence": randomize_template_sequence,
+                    }
+                )
             # Target chain
             align_target_weight = 10.0 if align_to in ["target", "ligand"] else 1.0
             if is_first_iteration:
@@ -180,7 +160,7 @@ def optimize_protein_design(
                     target_opts = {
                         "use_esm": use_esm_target,
                         "template_pdb": target_pdb,
-                        "template_chain_id": target_chain,
+                        "template_chain_id": target_pdb_chain,
                         "align": align_target_weight,
                     }
                 else:
@@ -198,28 +178,13 @@ def optimize_protein_design(
                     target_opts = {
                         "use_esm": use_esm_target,
                         "template_pdb": prev["pdb"],
-                        "template_chain_id": "A",
+                        "template_chain_id": target_chain,
                         "randomize_template_sequence": False,
                         "align": align_target_weight,
                     }
-            chains.append([target_seq, "A", target_entity_type, target_opts])
+            chains.append([target_seq, target_chain, target_entity_type, target_opts])
+            chains.append([seq, binder_chain, "protein", binder_opts])
 
-            # Binder chain
-            align_binder_weight = 10.0 if align_to == "binder" else 1.0
-            binder_opts = {
-                "use_esm": use_esm,
-                "cyclic": cyclic,
-                "align": align_binder_weight,
-            }
-            if not is_first_iteration:
-                binder_opts.update(
-                    {
-                        "template_pdb": prev["pdb"],
-                        "template_chain_id": "B",
-                        "randomize_template_sequence": randomize_template_sequence,
-                    }
-                )
-            chains.append([seq, "B", "protein", binder_opts])
         else:
             # Unconditional
             opts = {"use_esm": use_esm, "cyclic": cyclic}
@@ -227,26 +192,23 @@ def optimize_protein_design(
                 opts.update(
                     {
                         "template_pdb": prev["pdb"],
-                        "template_chain_id": "A",
+                        "template_chain_id": binder_chain,
                         "randomize_template_sequence": randomize_template_sequence,
                     }
                 )
-            chains.append([seq, "A", "protein", opts])
+            chains.append([seq, binder_chain, "protein", opts])
 
         # Fold
         if is_first_iteration:
             template_weight = None
         else:
-            # Ensure prev state result is available
             if prev is None or "state" not in prev or prev["state"].result is None:
                 raise ValueError(
                     "Previous state or result is missing for template weight calculation."
                 )
-
             template_weight = compute_template_weight(
                 prev["state"].result["pde"], prev["n_target"]
             )
-
         folder.prep_inputs(chains)
         folder.get_embeddings()
         folder.run_trunk(
@@ -257,7 +219,6 @@ def optimize_protein_design(
         refine_coords = None
         refine_step = None
         if partial_diffusion > 0 and prev is not None:
-            # Ensure prev state result and batch_inputs are available
             if (
                 "state" not in prev
                 or prev["state"].result is None
@@ -270,12 +231,10 @@ def optimize_protein_design(
                 refine_coords = prepare_refinement_coords(
                     folder,
                     prev["state"].result,
-                    # Pass the CPU batch_inputs dictionary directly
                     prev["state"].batch_inputs,
                 )
                 refine_step = int(num_diffn_timesteps * partial_diffusion)
 
-        # Sample
         folder.sample(
             num_diffn_timesteps=num_diffn_timesteps,
             num_diffn_samples=num_diffn_samples,
@@ -287,10 +246,9 @@ def optimize_protein_design(
         )
         return folder.save_state()
 
-    def design_sequence(step, prev):
+    def design_sequence(step, prev, design_chain):
         """Design sequence with MPNN"""
         temp_per_residue = None
-        # Ensure prev state and result exist before accessing plddt
         if (
             scale_temp_by_plddt
             and prev
@@ -298,16 +256,10 @@ def optimize_protein_design(
             and prev["state"].result
             and "plddt" in prev["state"].result
         ):
-            chain = "B" if is_binder_design else "A"
-            # Get plddt per token directly
             plddt_per_token = prev["state"].result["plddt"].numpy()
-
-            # Apply only to the designed chain if binder design
             if is_binder_design:
-                n_binder = len(prev["seq"])  # Use length of sequence from prev dict
-                # Need n_target to index correctly
+                n_binder = len(prev["seq"])
                 if "n_target" not in prev:
-                    # Attempt to calculate n_target if missing
                     if prev["state"].batch_inputs:
                         token_exists = prev["state"].batch_inputs["token_exists_mask"][
                             0
@@ -316,17 +268,17 @@ def optimize_protein_design(
                         prev["n_target"] = n_total - n_binder
                     else:
                         print("Warning: Cannot determine n_target for plddt scaling.")
-                        plddt_per_token = np.array([])  # Avoid error below
+                        plddt_per_token = np.array([])
                 if "n_target" in prev:
                     plddt_binder = plddt_per_token[prev["n_target"] :]
                     inv_plddt = np.square(1 - plddt_binder)
-                else:  # Fallback if n_target couldn't be found
+                else:
                     inv_plddt = np.array([])
             else:
                 inv_plddt = np.square(1 - plddt_per_token)
 
             temp_per_residue = {
-                f"{chain}{i + 1}": float(v) for i, v in enumerate(inv_plddt)
+                f"{design_chain}{i + 1}": float(v) for i, v in enumerate(inv_plddt)
             }
 
         extra_args = {"--batch_size": 1}
@@ -345,27 +297,27 @@ def optimize_protein_design(
         if bias_AA:
             extra_args["--bias_AA"] = bias_AA
 
+        CHAIN_TO_NUMBER = {
+            "A": 0,"B": 1,"C": 2,"D": 3,"E": 4,"F": 5,"G": 6,"H": 7,"I": 8,"J": 9,
+        }
+
         sequences, _ = designer.run(
             model_type=mpnn_model_type,
             pdb_path=prev["pdb"],
             seed=111 + step,
-            chains_to_design="B" if is_binder_design else "A",
+            chains_to_design=design_chain,
             temperature=temperature,
             temperature_per_residue=temp_per_residue,
             extra_args=extra_args,
         )
-
         seq = sequences[0]
         if is_binder_design:
-            # Handle potential ":" if MPNN outputs combined sequence
             if ":" in seq:
-                seq = seq.split(":")[-1]
-
+                seq = seq.split(":")[CHAIN_TO_NUMBER[design_chain]]
         return seq
 
     def format_metrics(prev, rmsd=None):
-        """Format metrics for printing"""
-        # Ensure state and result are present
+        """Format metrics for printing and CSV"""
         if (
             not prev
             or "state" not in prev
@@ -375,25 +327,19 @@ def optimize_protein_design(
             print("Warning: Cannot format metrics, missing state or result.")
             return "Metrics unavailable", {}
 
-        # Compute n_target from actual structure
-        # Use batch_inputs from the state
         if prev["state"].batch_inputs:
             token_exists = prev["state"].batch_inputs["token_exists_mask"][0]
             n_total = token_exists.sum().item()
-            # Ensure 'seq' is in prev for length calculation
             if "seq" in prev:
                 prev["n_target"] = n_total - len(prev["seq"])
             else:
-                prev["n_target"] = None  # Indicate we couldn't calculate it
+                prev["n_target"] = None
                 print("Warning: Cannot calculate n_target for metrics, 'seq' missing.")
         else:
             prev["n_target"] = None
-            print(
-                "Warning: Cannot calculate n_target for metrics, 'batch_inputs' missing."
-            )
+            print("Warning: Cannot calculate n_target for metrics, 'batch_inputs' missing.")
 
         result = prev["state"].result
-        # Use calculated n_target if available
         pae_metrics = compute_pae_metrics(
             result["pae"], prev["n_target"] if prev["n_target"] is not None else 0
         )
@@ -405,10 +351,8 @@ def optimize_protein_design(
         ipae_val = pae_metrics["ipae"]
         ranking_score_val = result["ranking_score"]
 
-        # Count number of alanine residues in binder
         alanine_count = None
         if is_binder_design and "seq" in prev and prev["n_target"] is not None:
-            # Target = A, Binder = B; binder should be at slice [n_target:]
             binder_seq = prev["seq"]
             alanine_count = binder_seq.count("A")
         elif not is_binder_design and "seq" in prev:
@@ -423,6 +367,8 @@ def optimize_protein_design(
             "ranking_score": ranking_score_val,
             "alanine_count": alanine_count,
         }
+        if rmsd is not None:
+            out["rmsd"] = rmsd
         msg = f"score={out['ranking_score']:.3f} plddt={out['plddt']:.1f} ptm={out['ptm']:.3f}"
         if is_binder_design:
             msg += f" iptm={out['iptm']:.3f} ipae={out['ipae']:.2f} ala={out['alanine_count']}"
@@ -440,53 +386,53 @@ def optimize_protein_design(
 
     # === MAIN LOOP ===
 
-    # Save performance metrics at each cycle
     iptm_per_cycle = []
     plddt_per_cycle = []
     alanine_count_per_cycle = []
-
-    
+    ipae_per_cycle = []
+    metrics_list = []
+    seq_per_cycle = []
 
     # Step 0
+    print(f"Initial seq: {initial_seq}")
     prev = {"seq": initial_seq}
     try:
         prev["state"] = fold_sequence(prev["seq"], is_first_iteration=True)
-        # Check if folding succeeded and produced results
         if prev["state"] is None or prev["state"].result is None:
             raise RuntimeError("Initial folding failed to produce results.")
 
         prev["bb"] = get_backbone_coords_from_result(prev["state"])
         prev["pdb"] = f"{prefix}/cycle_0.cif"
         folder.save(
-            prev["pdb"]
-        )  # This requires state.batch_inputs to be set by fold_sequence
-
-        # Save initial metrics
+            prev["pdb"],
+            use_entity_names=use_entity_names,
+        )
         msg, metric_dict = format_metrics(prev)
-        iptm0 = metric_dict["iptm"] if is_binder_design else None
-        plddt0 = metric_dict["plddt"]
-        alanine0 = metric_dict["alanine_count"]
+        iptm0 = metric_dict.get("iptm") if is_binder_design else None
+        plddt0 = metric_dict.get("plddt")
+        alanine0 = metric_dict.get("alanine_count")
+        ipae0 = metric_dict.get("ipae")
+        seq0 = prev.get("seq")
         iptm_per_cycle.append(iptm0)
         plddt_per_cycle.append(plddt0)
         alanine_count_per_cycle.append(alanine0)
-
+        ipae_per_cycle.append(ipae0)
+        seq_per_cycle.append(seq0)
+        metric_entry = {"cycle": 0}
+        metric_entry.update(metric_dict)
+        metrics_list.append(metric_entry)
         print(f"{prefix} | Step 0: {msg}")
 
     except Exception as e:
         print(f"Error during initial folding (Step 0): {e}")
-        # Decide how to handle: skip trial, return None, etc.
-        return None  # Example: return None if initial fold fails
+        return None
 
     best_step = 0
     best = copy_prev(prev)
-    # Optimization steps
     for step in range(n_steps):
-        try:  # Wrap step in try/except
-            # Design sequence
-            new_seq = design_sequence(step, prev)
+        try:
+            new_seq = design_sequence(step, prev, binder_chain)
             new = {"seq": new_seq}
-
-            # Fold new sequence
             new["state"] = fold_sequence(new["seq"], prev)
             if new["state"] is None or new["state"].result is None:
                 print(
@@ -497,13 +443,14 @@ def optimize_protein_design(
                 iptm_per_cycle.append(None if is_binder_design else None)
                 plddt_per_cycle.append(None)
                 alanine_count_per_cycle.append(None)
-                continue  # Skip rest of the loop for this step
+                ipae_per_cycle.append(None)
+                seq_per_cycle.append(new_seq)
+                metrics_list.append({"cycle": step + 1})
+                continue
 
             new["bb"] = get_backbone_coords_from_result(new["state"])
             new["pdb"] = f"{prefix}/cycle_{step + 1}.cif"
-            folder.save(new["pdb"])
-
-            # Compute metrics for this cycle
+            folder.save(new["pdb"], use_entity_names=use_entity_names)
             msg, metric_dict = format_metrics(
                 new,
                 compute_ca_rmsd(
@@ -513,12 +460,16 @@ def optimize_protein_design(
                 else None,
             )
 
-            iptm_per_cycle.append(metric_dict["iptm"] if is_binder_design else None)
-            plddt_per_cycle.append(metric_dict["plddt"])
-            alanine_count_per_cycle.append(metric_dict["alanine_count"])
+            iptm_per_cycle.append(metric_dict.get("iptm") if is_binder_design else None)
+            plddt_per_cycle.append(metric_dict.get("plddt"))
+            alanine_count_per_cycle.append(metric_dict.get("alanine_count"))
+            ipae_per_cycle.append(metric_dict.get("ipae"))
+            seq_per_cycle.append(new_seq)
+            metric_entry = {"cycle": step + 1}
+            metric_entry.update(metric_dict)
+            metrics_list.append(metric_entry)
 
             print(f"{prefix} | Step {step + 1}: {msg}")
-            # If is_binder_design and iptm > high_iptm_threshold, save the sequence in binder yaml format
             if (
                 is_binder_design
                 and metric_dict.get("iptm", 0.0) > high_iptm_threshold
@@ -527,7 +478,7 @@ def optimize_protein_design(
                 sequences=[]
                 sequence_entry = {
                     "protein": {
-                        "id": ["A"],     # binder chain is A
+                        "id": [binder_chain],
                         "sequence": new["seq"],
                         "msa": "empty",
                         "cyclic": cyclic
@@ -537,8 +488,8 @@ def optimize_protein_design(
                 if binder_mode == "protein":
                     target_sequence_entry = {
                         "protein": {
-                            "id": ["B"],     # binder chain is A
-                            "sequence": new["seq"],
+                            "id": [target_chain],
+                            "sequence": target_seq,
                             "msa": "empty",
                             "cyclic": cyclic
                         }
@@ -546,8 +497,8 @@ def optimize_protein_design(
                 elif binder_mode == "ligand":
                     target_sequence_entry = {
                         "ligand": {
-                            "id": ["B"],     # binder chain is A
-                            "smiles": new["seq"],
+                            "id": [target_chain],     
+                            "smiles": target_seq,
                         }
                     }
                 sequences.append(target_sequence_entry)
@@ -556,8 +507,6 @@ def optimize_protein_design(
                 with open(yaml_path, "w") as f:
                     yaml.dump({"sequences": sequences}, f)
                 print(f"Saved high-confidence binder sequences to {yaml_path}")
-
-            # Update best only if folding was successful
             if (
                 new["state"].result["ranking_score"]
                 > best["state"].result["ranking_score"]
@@ -565,32 +514,86 @@ def optimize_protein_design(
                 best = copy_prev(new)
                 best_step = step + 1
 
-            prev = new  # Update prev only if step was successful
+            prev = new
 
         except Exception as e:
             print(f"Error during optimization step {step + 1}: {e}")
             iptm_per_cycle.append(None if is_binder_design else None)
             plddt_per_cycle.append(None)
             alanine_count_per_cycle.append(None)
+            ipae_per_cycle.append(None)
+            seq_per_cycle.append(None)
+            metrics_list.append({"cycle": step + 1})
         finally:
             gc.collect()
             torch.cuda.empty_cache()
 
-    # Make metrics graphs and save (iptm, plddt, alanine count)
+    # --- SAVE SUMMARY CSV outside the run folder: summary_all_runs.csv ---
+    summary_csv_path = os.path.abspath(os.path.join(os.path.dirname(str(prefix)), "summary_all_runs.csv"))
+    os.makedirs(os.path.dirname(summary_csv_path), exist_ok=True)
+
+    # Compose summary row for this run
+    run_id = os.path.basename(os.path.normpath(str(prefix)))
+    summary_row = {"run_id": run_id}
+    for cyclenum in range(len(seq_per_cycle)):
+        summary_row[f"cycle_{cyclenum}_iptm"] = iptm_per_cycle[cyclenum]
+        summary_row[f"cycle_{cyclenum}_plddt"] = plddt_per_cycle[cyclenum]
+        summary_row[f"cycle_{cyclenum}_ipae"] = ipae_per_cycle[cyclenum]
+        summary_row[f"cycle_{cyclenum}_alanine"] = alanine_count_per_cycle[cyclenum]
+        summary_row[f"cycle_{cyclenum}_seq"] = seq_per_cycle[cyclenum]
+
+    # Write/append to summary_all_runs.csv
+    # Keep all columns across runs
+    if os.path.exists(summary_csv_path):
+        # Read existing header
+        with open(summary_csv_path, "r", newline="") as f:
+            reader = csv.DictReader(f)
+            existing_rows = list(reader)
+            existing_fields = reader.fieldnames
+        # Update union of fieldnames for header
+        all_fields = set(existing_fields) if existing_fields is not None else set()
+        all_fields.update(summary_row.keys())
+        # Keep order: run_id first, rest by sorted name
+        all_fields = ["run_id"] + sorted(set(all_fields) - {"run_id"})
+        # Update rows to new header if needed
+        updated_rows = []
+        for r in existing_rows:
+            for k in all_fields:
+                if k not in r:
+                    r[k] = ""
+            updated_rows.append(r)
+        # Add the new summary row with default values for missing columns
+        for k in all_fields:
+            if k not in summary_row:
+                summary_row[k] = ""
+        updated_rows.append(summary_row)
+        with open(summary_csv_path, "w", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=all_fields)
+            writer.writeheader()
+            for row in updated_rows:
+                writer.writerow(row)
+    else:
+        all_fields = ["run_id"] + sorted([k for k in summary_row.keys() if k != "run_id"])
+        with open(summary_csv_path, "w", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=all_fields)
+            writer.writeheader()
+            writer.writerow(summary_row)
+
+    # Make metrics graphs and save (iptm, plddt, alanine count, ipae)
     xvals = np.arange(len(iptm_per_cycle))
 
     if plot:
-        # Save arrays for reproducibility
         y_iptm = np.array([v if v is not None else np.nan for v in iptm_per_cycle])
         y_plddt = np.array([v if v is not None else np.nan for v in plddt_per_cycle])
+        y_ipae = np.array([v if v is not None else np.nan for v in ipae_per_cycle])
         y_alacount = np.array(
             [v if v is not None else np.nan for v in alanine_count_per_cycle]
         )
-        fig, axs = plt.subplots(1, 3, figsize=(10, 3))
-        colors = ["#9B59B6", "#FFA500", "#2ECC71"]
-        titles = ["iPTM per cycle", "pLDDT per cycle", "Alanine count per cycle"]
-        ylabels = ["iPTM", "pLDDT", "Alanine count (binder)"]
-        y_datas = [y_iptm, y_plddt, y_alacount]
+        fig, axs = plt.subplots(1, 4, figsize=(13, 3))
+        colors = ["#9B59B6", "#FFA500", "#1F77B4", "#2ECC71"]
+        titles = ["iPTM per cycle", "pLDDT per cycle", "iPAE per cycle", "Alanine count per cycle"]
+        ylabels = ["iPTM", "pLDDT", "iPAE", "Alanine count (binder)"]
+        y_datas = [y_iptm, y_plddt, y_ipae, y_alacount]
 
         for i, (ax, yvals, color, title, ylabel) in enumerate(
             zip(axs, y_datas, colors, titles, ylabels)
@@ -616,11 +619,11 @@ def optimize_protein_design(
             for x, y in zip(xvals, yvals):
                 label_str = ""
                 if not np.isnan(y):
-                    if i == 0:
+                    if i in [0, 2]:  # iPTM or iPAE
                         label_str = f"{y:.3f}"
-                    elif i == 1:
+                    elif i == 1:  # pLDDT
                         label_str = f"{y:.1f}"
-                    else:
+                    else:  # alanine count
                         label_str = f"{int(round(y))}"
                 ax.annotate(
                     label_str,
@@ -633,47 +636,42 @@ def optimize_protein_design(
             ax.xaxis.set_major_locator(MaxNLocator(integer=True))
 
         plt.tight_layout()
-        fig_path = f"{prefix}/metrics_per_cycle.png"
+        fig_path = f"{prefix}/run_{run_id}_design_cycle_results.png"
         os.makedirs(os.path.dirname(fig_path), exist_ok=True)
         plt.savefig(fig_path, dpi=300)
-        plt.show()
+        plt.show(block=False)
 
-    # Restore best (only if 'best' was successfully initialized)
     if best and best.get("state"):
         try:
             folder.restore_state(best["state"])
-            folder.save(f"{prefix}/best.cif")
+            folder.save(f"{prefix}/best.cif", use_entity_names=use_entity_names)
         except Exception as e:
             print(f"Error restoring/saving best state: {e}")
     else:
         print("Warning: No valid 'best' state found to restore.")
-        return None  # Or return the last valid 'prev' if desired
+        return None
 
     if final_validation and best and best.get("state"):
         try:
-            # Validation
             chains = []
             if is_binder_design:
-                # Target: use original context
+                binder_opts = {"use_esm": use_esm, "cyclic": cyclic}
                 if is_ligand_target:
                     target_opts = {"use_esm": False}
                 elif target_pdb is not None:
                     target_opts = {
                         "use_esm": use_esm_target,
                         "template_pdb": target_pdb,
-                        "template_chain_id": target_chain,
+                        "template_chain_id": target_pdb_chain,
                     }
                 else:
                     target_opts = {"use_esm": use_esm_target}
-                chains.append([target_seq, "A", target_entity_type, target_opts])
+                chains.append([target_seq, target_chain, target_entity_type, target_opts])
+                chains.append([best["seq"], binder_chain, "protein", binder_opts])
 
-                # Binder: no template, but can use ESM
-                binder_opts = {"use_esm": use_esm, "cyclic": cyclic}
-                chains.append([best["seq"], "B", "protein", binder_opts])
             else:
-                # Unconditional: no template, but can use ESM
                 opts = {"use_esm": use_esm, "cyclic": cyclic}
-                chains.append([best["seq"], "A", "protein", opts])
+                chains.append([best["seq"], binder_chain, "protein", opts])
 
             folder.prep_inputs(chains)
             folder.get_embeddings()
@@ -686,27 +684,23 @@ def optimize_protein_design(
                 use_alignment=use_alignment,
             )
 
-            # Check if sampling produced a result
             if folder.state is None or folder.state.result is None:
                 print("Warning: Final validation sampling failed to produce results.")
-                # Handle appropriately, maybe skip RMSD calculation
             else:
                 val = {
                     "seq": best["seq"],
                     "state": folder.save_state(),
                     "pdb": f"{prefix}/final_validation.cif",
                 }
-                folder.save(val["pdb"])
+                folder.save(val["pdb"], use_entity_names=use_entity_names)
                 val["bb"] = get_backbone_coords_from_result(val["state"])
 
-                # Validation RMSD
-                # Ensure best['n_target'] exists before calculating RMSD
                 if best.get("n_target") is not None:
                     val_rmsd = compute_ca_rmsd(
                         best["bb"], val["bb"], mode=rmsd_mode, n_target=best["n_target"]
                     )
                 else:
-                    val_rmsd = None  # Cannot compute RMSD
+                    val_rmsd = None
 
                 msg, _ = format_metrics(val, val_rmsd)
                 print(f"{prefix} | Final Validation: {msg}")
@@ -716,11 +710,12 @@ def optimize_protein_design(
         except Exception as e:
             print(f"Error during final validation: {e}")
 
-        finally:  # Cleanup after validation
+        finally:
             gc.collect()
             torch.cuda.empty_cache()
 
     return best
+
 
 
 class ProteinHunter_Chai:
@@ -731,7 +726,11 @@ class ProteinHunter_Chai:
         self.length = args.length
         self.percent_X = args.percent_X
         self.seq = args.seq
+        self.binder_chain = args.binder_chain
         self.target_seq = args.target_seq
+        self.target_pdb = args.target_pdb
+        self.target_chain = args.target_chain
+        self.target_pdb_chain = args.target_pdb_chain
         self.cyclic = args.cyclic
         self.n_trials = args.n_trials
         self.n_cycles = args.n_cycles
@@ -747,6 +746,7 @@ class ProteinHunter_Chai:
         self.render_freq = args.render_freq
         self.gpu_id = args.gpu_id
         self.jobname = re.sub(r"\W+", "", self.jobname)
+        self.use_alphafold3_validation = args.use_alphafold3_validation
         self.alphafold_dir = args.alphafold_dir
         self.af3_docker_name = args.af3_docker_name
         self.af3_database_settings = args.af3_database_settings
@@ -754,7 +754,7 @@ class ProteinHunter_Chai:
         self.use_msa_for_af3 = args.use_msa_for_af3
         self.work_dir = args.work_dir
         self.high_iptm_threshold = args.high_iptm_threshold
-
+        self.plot = args.plot
 
         def check(folder):
             return os.path.exists(folder)
@@ -816,6 +816,16 @@ class ProteinHunter_Chai:
         self.folder = folder
         self.designer = designer
 
+
+
+        # Detect target type
+        is_ligand_target = False
+        if self.target_seq is not None:
+            is_ligand_target = is_smiles(self.target_seq)
+
+        self.target_entity_type = "ligand" if is_ligand_target else "protein"
+
+
     def run_pipeline(self):
         X = []
         for t in range(self.n_trials):
@@ -828,16 +838,18 @@ class ProteinHunter_Chai:
                 self.viewer.new_obj()
 
 
-            prefix = f"./results_chai/{self.jobname}/run_{t}"
+            prefix = f"./results_chai/{self.jobname}"
             x = optimize_protein_design(
                 self.folder,
                 self.designer,
                 initial_seq=trial_seq,
+                binder_chain=self.binder_chain,
                 target_seq=self.target_seq,
-                target_pdb=None,
-                target_chain=None,
+                target_pdb=None, # self.target_pdb,
+                target_chain=self.target_chain,
+                target_pdb_chain=None, # self.target_pdb_chain,
                 binder_mode=self.binder_mode,
-                prefix=prefix,
+                prefix=f"{prefix}/run_{t}",
                 n_steps=self.n_cycles,
                 num_trunk_recycles=self.n_recycles,
                 num_diffn_timesteps=self.n_diff_steps,
@@ -855,11 +867,10 @@ class ProteinHunter_Chai:
                 viewer=self.viewer,
                 render_freq=self.render_freq,
                 final_validation=self.repredict,
-    
+                plot=self.plot,
                 **self.opts,
             )
             X.append(x)
-
             self.folder.full_cleanup()
             gc.collect()
             if torch.cuda.is_available():
@@ -887,19 +898,32 @@ class ProteinHunter_Chai:
         else:
             print("Warning: No successful trials completed.")
 
-        high_iptm_yaml_dir = os.path.join(os.path.dirname(str(f"{prefix}/best.cif")), "high_iptm_yaml")
-        if os.path.exists(high_iptm_yaml_dir) and len(os.listdir(high_iptm_yaml_dir)) > 0:
-            success_dir = os.path.join(os.path.dirname(high_iptm_yaml_dir), "1_af3_rosetta_validation")
-            af_output_dir, af_output_apo_dir, af_pdb_dir, af_pdb_dir_apo = run_alphafold_step(
-                high_iptm_yaml_dir,
-                self.alphafold_dir,
-                self.af3_docker_name,
-                self.af3_database_settings,
-                self.hmmer_path,
-                success_dir,
-                self.work_dir,
-                binder_id="A",
-                gpu_id=self.gpu_id,
-                high_iptm=True,
-                use_msa_for_af3=self.use_msa_for_af3,
-            )
+        if self.use_alphafold3_validation:
+            sys.path.append(os.path.join(os.path.dirname(__file__), "utils"))
+            from utils.alphafold_utils import run_alphafold_step
+            from utils.pyrosetta_utils import run_rosetta_step
+            high_iptm_yaml_dir = os.path.join(prefix, "high_iptm_yaml")
+            if os.path.exists(high_iptm_yaml_dir) and len(os.listdir(high_iptm_yaml_dir)) > 0:
+                success_dir = os.path.join(prefix, "1_af3_rosetta_validation")
+                af_output_dir, af_output_apo_dir, af_pdb_dir, af_pdb_dir_apo = run_alphafold_step(
+                    high_iptm_yaml_dir,
+                    self.alphafold_dir,
+                    self.af3_docker_name,
+                    self.af3_database_settings,
+                    self.hmmer_path,
+                    success_dir,
+                    os.path.expanduser(self.work_dir) or os.getcwd(),
+                    binder_id=self.binder_chain,
+                    gpu_id=self.gpu_id,
+                    high_iptm=True,
+                    use_msa_for_af3=self.use_msa_for_af3,
+                )
+                if self.target_entity_type == "protein":
+                    # --- Rosetta Step ---
+                    run_rosetta_step(
+                        success_dir,
+                        af_pdb_dir,
+                        af_pdb_dir_apo,
+                        binder_id=self.binder_chain,
+                        target_type=self.target_entity_type,
+                    )

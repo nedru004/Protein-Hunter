@@ -34,8 +34,8 @@ from model_utils import (
     shallow_copy_tensor_dict,
     smart_split,
 )
-from utils.alphafold_utils import run_alphafold_step
-from utils.pyrosetta_utils import run_rosetta_step
+# from utils.alphafold_utils import run_alphafold_step
+# from utils.pyrosetta_utils import run_rosetta_step
 
 class InputDataBuilder:
     """Handles parsing command-line arguments and constructing the base Boltz input data dictionary."""
@@ -304,6 +304,7 @@ class ProteinHunter_Boltz:
         # 3. Setup Directories
         self.save_dir = self.data_builder.save_dir
         self.protein_hunter_save_dir = self.data_builder.protein_hunter_save_dir
+    
 
         print("✅ ProteinHunter_Boltz initialized.")
 
@@ -675,6 +676,11 @@ class ProteinHunter_Boltz:
         print(f"\n✅ All run/cycle metrics saved to {summary_csv}")
 
     def _run_downstream_validation(self):
+        # This ensures they are in scope when called later in this function
+        sys.path.append(os.path.join(os.path.dirname(__file__), "utils"))
+        from utils.alphafold_utils import run_alphafold_step
+        from utils.pyrosetta_utils import run_rosetta_step
+        
         """Executes AlphaFold and Rosetta validation steps."""
         a = self.args
         
@@ -711,15 +717,16 @@ class ProteinHunter_Boltz:
                     use_msa_for_af3=a.use_msa_for_af3,
                 )
             )
+            if target_type == "protein":
+                # --- Rosetta Step ---
+                run_rosetta_step(
+                    success_dir,
+                    af_pdb_dir,
+                    af_pdb_dir_apo,
+                    binder_id=a.binder_chain,
+                    target_type=target_type,
+                )
 
-            # --- Rosetta Step ---
-            run_rosetta_step(
-                success_dir,
-                af_pdb_dir,
-                af_pdb_dir_apo,
-                binder_id=a.binder_chain,
-                target_type=target_type,
-            )
 
     def run_pipeline(self):
         """Orchestrates the entire protein design and validation pipeline."""
@@ -744,4 +751,5 @@ class ProteinHunter_Boltz:
         self._save_summary_metrics(all_run_metrics)
 
         # 4. Run Downstream Validation
-        self._run_downstream_validation()
+        if self.args.use_alphafold3_validation:
+            self._run_downstream_validation()

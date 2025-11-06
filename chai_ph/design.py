@@ -18,6 +18,9 @@ def parse_args():
         "--length", type=int, default=150, help="Length of the designed protein chain."
     )
     sequence_group.add_argument(
+        "--binder_chain", type=str, default="A", help="Chain ID for binder design."
+    )
+    sequence_group.add_argument(
         "--percent_X",
         type=int,
         default=50,
@@ -33,6 +36,24 @@ def parse_args():
         help="Target sequence (protein) or SMILES (ligand) for binder design (optional).",
     )
     sequence_group.add_argument(
+        "--target_chain",
+        type=str,
+        default="B",
+        help="Chain ID for target protein (default: B).",
+    )
+    sequence_group.add_argument(
+        "--target_pdb",
+        type=str,
+        default=None,
+        help="Optional template PDB file (target_pdb) for design.",
+    )
+    sequence_group.add_argument(
+        "--target_pdb_chain",
+        type=str,
+        default=None,
+        help="Chain ID in template PDB (required if target_pdb provided).",
+    )
+    sequence_group.add_argument(
         "--cyclic",
         action="store_true",
         default=False,
@@ -44,13 +65,13 @@ def parse_args():
     opt_group.add_argument(
         "--n_trials",
         type=int,
-        default=1,
+        default=2,
         help="Number of independent optimization trials.",
     )
     opt_group.add_argument(
         "--n_cycles",
         type=int,
-        default=5,
+        default=8,
         help="Number of folding/design optimization cycles (steps).",
     )
     opt_group.add_argument(
@@ -117,10 +138,17 @@ def parse_args():
         default=100,
         help="Visualization refresh frequency (diffusion steps).",
     )
+    vis_group.add_argument(
+        "--plot",
+        action="store_true",
+        default=False,
+        help="Plot cycles figs per run (requires matplotlib).",
+    )
     vis_group.add_argument("--gpu_id", type=int, default=0, help="GPU ID to use.")
 
 
     af_group = parser.add_argument_group("AlphaFold Settings")
+    af_group.add_argument("--use_alphafold3_validation", action="store_true", default=False)
     af_group.add_argument(
         "--alphafold_dir", default=os.path.expanduser("~/alphafold3"), type=str
     )
