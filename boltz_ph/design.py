@@ -39,14 +39,14 @@ def parse_args():
     parser.add_argument("--nucleic_seq", default="", type=str)
     parser.add_argument(
         "--template_path", default="", type=str
-    )  #path(s) to .cif/.pdb, multiple allowed separated by colon or comma
+    )  #pdb code or path(s) to .cif/.pdb, multiple allowed separated by colon or comma
     parser.add_argument(
         "--template_chain_id", default="", type=str
     )  # for prediction, the chain id to use for the template
     parser.add_argument(
         "--template_cif_chain_id", default="", type=str
     )  # for mmCIF files, the chain id to use for the template (for alignment)
-    parser.add_argument("--no_potentials", action="store_true")
+    parser.add_argument("--no_potentials", type=bool, default=True)
     parser.add_argument("--diffuse_steps", default=200, type=int)
     parser.add_argument("--recycling_steps", default=3, type=int)
     parser.add_argument("--boltz_model_version", default="boltz2", type=str)
@@ -56,9 +56,9 @@ def parse_args():
         type=str,
     )
     parser.add_argument("--ccd_path", default="~/.boltz/mols", type=str)
-    parser.add_argument("--randomly_kill_helix_feature", action="store_true")
+    parser.add_argument("--randomly_kill_helix_feature", action="store_true", default=False)
     parser.add_argument("--negative_helix_constant", default=0.2, type=float)
-    parser.add_argument("--logmd", action="store_true")
+    parser.add_argument("--logmd", action="store_true", default=False)
     parser.add_argument("--save_dir", default="", type=str)
     parser.add_argument("--add_constraints", action="store_true")
     parser.add_argument("--contact_residues", default="", type=str)
@@ -119,6 +119,7 @@ def parse_args():
 
 def main():
     args = parse_args()
+    print(args)
     # Instantiate the main class and run the pipeline
     protein_hunter = ProteinHunter_Boltz(args)
     protein_hunter.run_pipeline()
