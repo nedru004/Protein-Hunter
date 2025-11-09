@@ -379,43 +379,49 @@ def measure_rosetta_energy(
 
     new_rows = []
     
-    for pdb_file in os.listdir(pdbs_path):
-        if pdb_file.endswith(".pdb") and not pdb_file.startswith("relax_"):
-            if pdb_file in processed_files:
-                continue
+    # for pdb_file in os.listdir(pdbs_path):
+    #     if pdb_file.endswith(".pdb") and not pdb_file.startswith("relax_"):
+    #         if pdb_file in processed_files:
+    #             continue
 
-            try:
-                design_pathway = os.path.join(pdbs_path, pdb_file)
-                relax_pathway = os.path.join(relaxed_dir, f"relax_{pdb_file}")
+    #         try:
+    #             design_pathway = os.path.join(pdbs_path, pdb_file)
+    #             relax_pathway = os.path.join(relaxed_dir, f"relax_{pdb_file}")
                 
-                # Check for chain ID from holo PDB (might be A or B depending on AF3 processing)
-                binder_chain = get_binder_chain(design_pathway)
+    #             # Check for chain ID from holo PDB (might be A or B depending on AF3 processing)
+    #             binder_chain = get_binder_chain(design_pathway)
                 
-                pr_relax(design_pathway, relax_pathway)
+    #             pr_relax(design_pathway, relax_pathway)
                 
-                (
-                    trajectory_interface_scores,
-                    trajectory_interface_AA,
-                    trajectory_interface_residues,
-                ) = score_interface(relax_pathway, binder_chain, target_chain="A")
+    #             (
+    #                 trajectory_interface_scores,
+    #                 trajectory_interface_AA,
+    #                 trajectory_interface_residues,
+    #             ) = score_interface(relax_pathway, binder_chain, target_chain="A")
                 
-                print(f"Rosetta scores for {pdb_file}: {trajectory_interface_scores}")
+    #             print(f"Rosetta scores for {pdb_file}: {trajectory_interface_scores}")
 
-                row_data = {"PDB": relaxed_dir, "Model": f"relax_{pdb_file}"}
-                row_data.update(trajectory_interface_scores)
-                new_rows.append(row_data)
-                processed_files.add(pdb_file)
+    #             row_data = {"PDB": relaxed_dir, "Model": f"relax_{pdb_file}"}
+    #             row_data.update(trajectory_interface_scores)
+    #             new_rows.append(row_data)
+    #             processed_files.add(pdb_file)
                 
-            except Exception as e:
-                print(f"Error processing {pdb_file}: {e}")
+    #         except Exception as e:
+    #             print(f"Error processing {pdb_file}: {e}")
 
     # Append new rows and save
-    if new_rows:
-        df = pd.concat([df, pd.DataFrame(new_rows)], ignore_index=True)
-        df.to_csv(output_path, index=False)
-        print(f"✅ New Rosetta results appended to {output_path}")
+    # if new_rows:
+    #     df = pd.concat([df, pd.DataFrame(new_rows)], ignore_index=True)
+    #     df.to_csv(output_path, index=False)
+    #     print(f"✅ New Rosetta results appended to {output_path}")
+    # else:
+    #     print("No new PDB files to process for Rosetta scoring.")
+
+    if os.path.exists(output_path):
+        df = pd.read_csv(output_path)
     else:
-        print("No new PDB files to process for Rosetta scoring.")
+        print("No Rosetta results found.")
+        return
 
     # --- Filtering Logic ---
     if df.empty:
@@ -460,110 +466,95 @@ def measure_rosetta_energy(
     print(f"Number of designs failing Rosetta filters: {len(failed_df)}")
 
     all_filtered_rows = []
+    all_failed_rows = []
+    success_sample_num =0
     
-    # --- Final AlphaFold Metric Cross-Validation (Only for filtered designs) ---
     if len(filtered_df) > 0:
-        confidence_csv_path = os.path.join(pdbs_path, "high_iptm_confidence_scores.csv")
-        if os.path.exists(confidence_csv_path):
-            af_confidence_df = pd.read_csv(confidence_csv_path)
-            af_confidence_df['file_key'] = af_confidence_df['file'].str.replace('.cif', '.pdb')
-        else:
-            print("Warning: AlphaFold confidence CSV not found. Skipping final cross-validation checks.")
-            af_confidence_df = None
-
         for i in range(len(filtered_df)):
             try:
-                row = filtered_df.iloc[i].copy()
-                relaxed_pdb_name = row["Model"]
-                relaxed_pdb_path = os.path.join(row["PDB"], relaxed_pdb_name)
-                
-                # Extract original AF3 model name
-                model_base = relaxed_pdb_name.replace("relax_", "").replace("_model.pdb", "")
-                
-                # Fetch AF3 metrics (iptm, plddt, i_pae, rmsd) from CSV if available
-                af_row = af_confidence_df[af_confidence_df['file_key'] == model_base + ".pdb"].iloc[0] if af_confidence_df is not None and (model_base + ".pdb") in af_confidence_df['file_key'].values else {}
-                
-                # 1. AF3 Metrics
-                row["iptm"] = af_row.get("iptm", float('nan'))
-                row["rmsd"] = af_row.get("rmsd", float('nan')) # apo_holo_rmsd
-                
-                # 2. Sequence and Rg (Requires fetching original AF3 PDB)
-                af_holo_pdb = os.path.join(pdbs_path, model_base + ".pdb")
-                af_apo_pdb = os.path.join(pdbs_apo_path, model_base + ".pdb")
+                row = filtered_df.iloc[i].copy()  # Create a copy to avoid SettingWithCopyWarning
+                cif_path = row['PDB'] + '/' + row['Model']
 
-                xyz_holo, aa_seq = get_CA_and_sequence(af_holo_pdb, chain_id=binder_holo_chain)
-                row["aa_seq"] = aa_seq
-                rg, _ = radius_of_gyration(relaxed_pdb_path, chain_id=binder_holo_chain)
-                row["rg"] = rg
+                rg, length = radius_of_gyration(cif_path, chain_id=binder_holo_chain)
                 
-                # 3. pLDDT and i-PAE (Requires reading JSONs) - simplified read (not implemented here, relies on prior CSV)
-                # For this refactor, we rely on the RMSD calculation step to have populated plddt and i_pae into the AF confidence CSV.
-                row["plddt"] = af_row.get("plddt", float('nan'))
+                # Extract model name without relax_ prefix if present
+                model_base = row['Model'].split('relax_')[-1].split('_model.pdb')[0] if row['Model'].startswith('relax') else row['Model'].split('_model.pdb')[0]
                 
-                # We need i_pae, which is usually a manual calculation post-AF3 prediction. 
-                # Assuming the logic in the original file would calculate/fetch i_pae and put it in the row. 
-                # Since the original file fetches it from JSON *inside* this loop, we re-create the fetch logic for robustness.
+                # Construct paths
+                base_path = '/'.join(row['PDB'].split('/')[:-1]) + '/02_design_final_af3/' + model_base
+                confidenece_json_1 = f"{base_path}/{model_base}_summary_confidences.json"
+                confidenece_json_2 = f"{base_path}/{model_base}_confidences.json"
+                af_cif = f"{base_path}/{model_base}_model.cif"
                 
-                base_af3_path = os.path.join(pdbs_path.replace("03_af_pdb_success", "02_design_final_af3"), model_base)
-                confidenece_json_2 = f"{base_af3_path}/{model_base}_confidences.json"
+                aa_seq = get_sequence(af_cif, chain_id=binder_holo_chain)
                 
-                if os.path.exists(confidenece_json_2):
-                     with open(confidenece_json_2) as f:
-                        confidence_data = json.load(f)
-                        pae_matrix = np.array(confidence_data["pae"])
-                        protein_len = len(aa_seq)
-                        interface_pae1 = np.mean(pae_matrix[:protein_len, protein_len:])
-                        interface_pae2 = np.mean(pae_matrix[protein_len:, :protein_len])
-                        i_pae = (interface_pae1 + interface_pae2) / 2
-                        row["i_pae"] = i_pae
+                # Set PDB paths
+                if row['Model'].startswith('relax'):
+                    af_holo_pdb = pdbs_path + '/' + row['Model'].split('relax_')[1]
+                    af_apo_pdb = pdbs_apo_path + '/' + row['Model'].split('relax_')[1]
                 else:
-                    row["i_pae"] = float('nan')
+                    af_holo_pdb = pdbs_path + '/' + row['Model']
+                    af_apo_pdb = pdbs_apo_path + '/' + row['Model']
 
-
-                # 4. Final Threshold Filter
-                print(f"Final check for {model_base}: iptm={row['iptm']:.2f}, plddt={row['plddt']:.1f}, rg={row['rg']:.1f}, i_pae={row['i_pae']:.1f}, rmsd={row['rmsd']:.1f}")
-                
-                final_pass = (
-                    row.get("iptm", 0.0) > 0.5
-                    and row.get("plddt", 0.0) > 80
-                    and row.get("rg", 20.0) < 17
-                    and row.get("i_pae", 20.0) < 15
-                    and row.get("rmsd", 5.0) < 3.5
-                )
-
-                if final_pass:
-                    shutil.copy(relaxed_pdb_path, os.path.join(save_dir, relaxed_pdb_name))
-                    all_filtered_rows.append(row)
-                else:
-                    failed_df = pd.concat([failed_df, pd.DataFrame([row])], ignore_index=True)
+                xyz_holo, seq_holo = get_CA_and_sequence(af_holo_pdb, chain_id=binder_holo_chain)
+                xyz_apo, seq_apo = get_CA_and_sequence(af_apo_pdb, chain_id=binder_apo_chain)
+                rmsd = np_rmsd(xyz_holo, xyz_apo)
+                row['apo_holo_rmsd'] = rmsd
+            
+                with open(confidenece_json_1, 'r') as f:
+                    confidence_data = json.load(f)
+                    row['iptm'] = confidence_data['iptm']
                     
+                with open(confidenece_json_2, 'r') as f:
+                    confidence_data = json.load(f)
+                    
+                    row['plddt'] = np.mean(confidence_data['atom_plddts'])
+                    pae_matrix= np.array(confidence_data['pae'])
+                    protein_len = len(aa_seq)
+                    interface_pae1 = np.mean(pae_matrix[:protein_len, protein_len:])
+                    interface_pae2 = np.mean(pae_matrix[protein_len:, :protein_len])
+                    i_pae = (interface_pae1 + interface_pae2) / 2
+
+                row['i_pae'] = i_pae
+                row['rg'] = rg
+                row['aa_seq'] = aa_seq
+
+                print(f"iptm: {row['iptm']:.2f}, plddt: {row['plddt']:.1f}, rg: {rg:.1f}, i_pae: {row['i_pae']:.1f}, apo_holo_rmsd: {row['apo_holo_rmsd']:.1f}")
+                if row['iptm'] > 0.5 and row['plddt'] > 80 and rg < 17 and row['i_pae'] < 15 and row['apo_holo_rmsd'] < 3.5:
+                    shutil.copy(Path(row['PDB']) / row['Model'], save_dir + '/' + row['Model'])
+                    all_filtered_rows.append(row)
+                    success_sample_num+=1
+                else:
+                    all_failed_rows.append(row)
             except Exception as e:
-                print(f"Error during final cross-validation for {relaxed_pdb_name}: {e}")
-                failed_df = pd.concat([failed_df, pd.DataFrame([filtered_df.iloc[i]])], ignore_index=True) # Add to failed if exception occurs
+                print(f"Error processing {row['Model']}: {e}")
                 continue
 
-    # --- Save Final Results ---
-    success_csv = os.path.join(save_dir, "success_designs.csv")
-    failed_csv = os.path.join(save_dir, "failed_designs.csv")
-    zip_path = save_dir + ".zip"
+    # Add all failed cases
+    print("success_sample_num", success_sample_num)
+    for i in range(len(failed_df)):
+        all_failed_rows.append(failed_df.iloc[i])
 
+    success_csv = os.path.join(save_dir, 'success_designs.csv')
+    failed_csv = os.path.join(save_dir, 'failed_designs.csv')
+    zip_path = save_dir + '.zip'
+    
     save_df = pd.DataFrame(all_filtered_rows)
     save_df.to_csv(success_csv, index=False)
+    
+    print("Number of Success designs", len(save_df))
 
-    print(f"🎉 Number of final successful designs: {len(save_df)}")
-
+    failed_df = pd.DataFrame(all_failed_rows)
     failed_df.to_csv(failed_csv, index=False)
 
-    # Zip the successful PDBs and CSVs
-    if save_df.shape[0] > 0:
-        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zipf:
-            for root, dirs, files in os.walk(save_dir):
-                for file in files:
-                    file_path = os.path.join(root, file)
-                    arcname = os.path.relpath(file_path, save_dir)
-                    zipf.write(file_path, arcname)
-            print(f"📦 Successfully zipped results to {zip_path}")
+    with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+        for root, dirs, files in os.walk(save_dir):
+            for file in files:
+                file_path = os.path.join(root, file)
+                arcname = os.path.relpath(file_path, save_dir)
+                zipf.write(file_path, arcname)
 
+    
 
 def run_rosetta_step(
     ligandmpnn_dir, af_pdb_dir, af_pdb_dir_apo, binder_id="A", target_type="protein"
