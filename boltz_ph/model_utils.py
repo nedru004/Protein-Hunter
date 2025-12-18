@@ -575,6 +575,7 @@ def design_sequence(
     bias_AA="",
     temperature=0.02,
     return_logits=False,
+    fixed_residues=""
 ):
     """Runs the LigandMPNN (or SolubleMPNN) sequence design wrapper."""
     seq, logits = designer.run(
@@ -584,6 +585,7 @@ def design_sequence(
         chains_to_design=chains_to_design,
         bias_AA=bias_AA,
         omit_AA=omit_AA,
+        fixed_residues="",
         return_logits=return_logits,
         extra_args={
             "--temperature": temperature,
