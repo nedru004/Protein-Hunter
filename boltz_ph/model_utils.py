@@ -256,6 +256,7 @@ def get_boltz_model(
             steering_args=asdict(steering_args),
             pairformer_args=asdict(pairformer_args),
             msa_args=asdict(msa_args),
+            weights_only=False,
         )
     elif model_version == "boltz1":
         model_module = Boltz1.load_from_checkpoint(
