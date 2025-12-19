@@ -586,7 +586,7 @@ def design_sequence(
         chains_to_design=chains_to_design,
         bias_AA=bias_AA,
         omit_AA=omit_AA,
-        fixed_residues="",
+        fixed_positions=fixed_residues,
         return_logits=return_logits,
         extra_args={
             "--temperature": temperature,
