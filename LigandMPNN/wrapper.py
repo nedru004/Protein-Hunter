@@ -23,6 +23,7 @@ class LigandMPNNWrapper:
         extra_args=None,
         fix_unk=True,
         return_logits=False,
+        fixed_positions=""
     ):
         """
         Unified Ligand/ProteinMPNN runner.
@@ -68,7 +69,8 @@ class LigandMPNNWrapper:
                 "--pdb_path", pdb_copy,
                 "--out_folder", out_folder,
                 "--model_type", model_type,
-                "--temperature", str(temperature)
+                "--temperature", str(temperature),
+                "--fixed_positions", fixed_positions,
             ]
 
             # --- Model checkpoint handling ---
