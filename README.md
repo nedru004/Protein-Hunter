@@ -17,8 +17,8 @@ within diffusion for protein design](https://www.biorxiv.org/content/10.1101/202
 
 ## 📝 Colab Notebook
 
-[![Open Protein Hunter (Chai)](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/yehlincho/Protein-Hunter/blob/main/protein_hunter_chai_colab.ipynb)
-[![Open Protein Hunter (Boltz)](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/yehlincho/Protein-Hunter/blob/main/protein_hunter_boltz_colab.ipynb)
+[![Open Protein Hunter (Chai)](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/nedru004/Protein-Hunter/blob/main/protein_hunter_chai_colab.ipynb)
+[![Open Protein Hunter (Boltz)](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/nedru004/Protein-Hunter/blob/main/protein_hunter_boltz_colab.ipynb)
 
 
 ## 🚀 Quick Start
