@@ -70,7 +70,7 @@ class LigandMPNNWrapper:
                 "--out_folder", out_folder,
                 "--model_type", model_type,
                 "--temperature", str(temperature),
-                "--fixed_positions", fixed_positions,
+                "--fixed_residues", fixed_positions,
             ]
 
             # --- Model checkpoint handling ---
