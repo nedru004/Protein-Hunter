@@ -443,11 +443,10 @@ class ProteinHunter_Boltz:
         # Calculate i-pTM
         if len(pair_chains) > 1:
             values = [
-                (
-                    pair_chains[binder_chain_idx][i].detach().cpu().numpy()
-                    + pair_chains[i][binder_chain_idx].detach().cpu().numpy()
+                max(
+                    pair_chains[binder_chain_idx][i].detach().cpu().numpy(),
+                    pair_chains[i][binder_chain_idx].detach().cpu().numpy()
                 )
-                / 2.0
                 for i in range(len(pair_chains))
                 if i != binder_chain_idx
             ]
@@ -520,11 +519,10 @@ class ProteinHunter_Boltz:
             pair_chains = output["pair_chains_iptm"]
             if len(pair_chains) > 1:
                 values = [
-                    (
-                        pair_chains[current_chain_idx][i].detach().cpu().numpy()
-                        + pair_chains[i][current_chain_idx].detach().cpu().numpy()
+                    max(
+                        pair_chains[current_chain_idx][i].detach().cpu().numpy(),
+                        pair_chains[i][current_chain_idx].detach().cpu().numpy()
                     )
-                    / 2.0
                     for i in range(len(pair_chains))
                     if i != current_chain_idx
                 ]
