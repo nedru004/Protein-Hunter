@@ -105,6 +105,19 @@ def parse_args():
     mpnn_group.add_argument(
         "--omit_aa", type=str, default="", help="Amino acid types to omit from design (e.g., 'C')."
     )
+    mpnn_group.add_argument(
+        "--fixed_positions",
+        type=str,
+        default="",
+        help="1-indexed binder positions to keep during MPNN, e.g. '10-16,20' or 'A10 A11 A12'.",
+    )
+    mpnn_group.add_argument(
+        "--motif",
+        type=str,
+        default="",
+        help="Amino acids to place at --fixed_positions and keep during MPNN. "
+        "If omitted, residues are taken from --seq at those positions.",
+    )
 
     # temp and bias params
     mpnn_group.add_argument("--temperature", default=0.1, type=float)

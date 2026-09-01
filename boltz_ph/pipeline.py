@@ -11,7 +11,11 @@ import torch
 import yaml
 
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
-from LigandMPNN.wrapper import LigandMPNNWrapper
+from LigandMPNN.wrapper import (
+    LigandMPNNWrapper,
+    apply_fixed_motif,
+    resolve_mpnn_fixed_residues,
+)
 
 from boltz_ph.constants import CHAIN_TO_NUMBER
 from utils.metrics import get_CA_and_sequence # Used implicitly in design.py
@@ -282,6 +286,22 @@ class ProteinHunter_Boltz:
 
     def __init__(self, args):
         self.args = args
+        self.binder_chain = "A"
+        self.fixed_positions, self.fixed_residue_str, self.motif_aas = (
+            resolve_mpnn_fixed_residues(
+                getattr(args, "fixed_positions", "") or "",
+                getattr(args, "motif", "") or "",
+                args.seq or "",
+                chain=self.binder_chain,
+                min_length=None if args.seq else args.min_protein_length,
+            )
+        )
+        if self.fixed_residue_str:
+            print(
+                f"Fixing MPNN motif {self.motif_aas} at binder positions "
+                f"{self.fixed_residue_str}"
+            )
+
         self.device = f"cuda:{args.gpu_id}" if torch.cuda.is_available() else "cpu"
         print("Using device:", self.device)
 
@@ -299,7 +319,6 @@ class ProteinHunter_Boltz:
         # 3. Setup Directories
         self.save_dir = self.data_builder.save_dir
         self.protein_hunter_save_dir = self.data_builder.protein_hunter_save_dir
-        self.binder_chain = "A"
 
         print("✅ ProteinHunter_Boltz initialized.")
 
@@ -375,6 +394,10 @@ class ProteinHunter_Boltz:
             )
         else:
             initial_seq = a.seq
+        if self.motif_aas:
+            initial_seq = apply_fixed_motif(
+                initial_seq, self.fixed_positions, self.motif_aas
+            )
         update_binder_sequence(initial_seq)
         print(f"Binder initial sequence length: {binder_length}")
 
@@ -432,6 +455,10 @@ class ProteinHunter_Boltz:
 
             # Resample initial sequence
             new_seq = sample_seq(binder_length, exclude_P=a.exclude_P, frac_X=a.percent_X/100)
+            if self.motif_aas:
+                new_seq = apply_fixed_motif(
+                    new_seq, self.fixed_positions, self.motif_aas
+                )
             update_binder_sequence(new_seq)
             clean_memory()
 
@@ -485,6 +512,7 @@ class ProteinHunter_Boltz:
                 "chains_to_design": self.binder_chain,
                 "omit_AA": f"{a.omit_AA},P" if cycle == 0 else a.omit_AA,
                 "bias_AA": f"A:{alpha}" if a.alanine_bias else "",
+                "fixed_residues": self.fixed_residue_str,
             }
 
             seq_str, logits = design_sequence(

@@ -41,6 +41,27 @@ cmd = [
 ]
 subprocess.run(cmd, check=True)
 
+# binder design with a fixed sequence motif (kept during MPNN)
+# cmd = [
+#     "python", boltz_ph_script_path,
+#     "--num_designs", "2",
+#     "--num_cycles", "7",
+#     "--protein_seqs", "FTVTVPKDLYVVEYGSNMTIECKFPVEKQLDLAALIVYWEMEDKNIIQFVHGEEDLKVQHSSYRQRARLLKDQLSLGNAALQITDVKLQDAGVYRCMISYGGADYKRITVKVNK",
+#     "--msa_mode", "mmseqs",
+#     "--gpu_id", "0",
+#     "--name", "PDL1_fixed_motif",
+#     "--min_protein_length", "90",
+#     "--max_protein_length", "150",
+#     "--motif", "RGD",
+#     "--fixed_positions", "45-47",
+#     "--percent_X", "90",
+#     "--high_iptm_threshold", "0.7",
+#     "--use_msa_for_af3",
+#     "--plot",
+#     "--alanine_bias",
+# ]
+# subprocess.run(cmd, check=True)
+
 
 
 cmd = [

@@ -25,7 +25,11 @@ from chai_ph.helpers import (
     prepare_refinement_coords,
     compute_ca_rmsd,
 )
-from LigandMPNN.wrapper import LigandMPNNWrapper
+from LigandMPNN.wrapper import (
+    LigandMPNNWrapper,
+    apply_fixed_motif,
+    resolve_mpnn_fixed_residues,
+)
 
 def optimize_protein_design(
     folder: ChaiFolder,
@@ -62,6 +66,7 @@ def optimize_protein_design(
     viewer: Optional[py2Dmol.view] = None,
     render_freq: int = 1,
     plot: bool = False,
+    fixed_residues: Optional[str] = None,
 ):
 
     """
@@ -91,6 +96,7 @@ def optimize_protein_design(
         pde_cutoff_intra: Intra-chain PDE cutoff (Å)
         pde_cutoff_inter: Inter-chain PDE cutoff (Å)
         omit_AA: Amino acids to exclude from MPNN
+        fixed_residues: LigandMPNN residue tokens to keep, e.g. 'A12 A13 A14'
         randomize_template_sequence: Randomize template sequence identity
         cyclic: Enable cyclic topology
         final_validation: Run final fold without templates
@@ -348,6 +354,7 @@ def optimize_protein_design(
             temperature=temperature,
             temperature_per_residue=temp_per_residue,
             extra_args=extra_args,
+            fixed_residues=fixed_residues,
         )
         seq = sequences[0]
         if is_binder_design:
@@ -830,6 +837,8 @@ class ProteinHunter_Chai:
         self.hysteresis_mode = args.hysteresis_mode
         self.repredict = args.repredict
         self.omit_aa = args.omit_aa
+        self.fixed_positions_spec = getattr(args, "fixed_positions", "") or ""
+        self.motif = getattr(args, "motif", "") or ""
         self.temperature = args.temperature
         self.alanine_bias = args.alanine_bias
         self.alanine_bias_start = args.alanine_bias_start
@@ -875,6 +884,21 @@ class ProteinHunter_Chai:
         self.omit_AA = clean_protein_sequence(self.omit_aa)
         if self.omit_AA == "":
             self.omit_AA = None
+
+        self.fixed_positions, self.fixed_residue_str, self.motif_aas = (
+            resolve_mpnn_fixed_residues(
+                self.fixed_positions_spec,
+                self.motif,
+                self.seq_clean,
+                chain=self.binder_chain,
+                min_length=None if self.seq_clean else self.min_protein_length,
+            )
+        )
+        if self.fixed_residue_str:
+            print(
+                f"Fixing MPNN motif {self.motif_aas} at binder positions "
+                f"{self.fixed_residue_str}"
+            )
 
         if self.show_visual: 
             self.viewer = py2Dmol.view((600, 400), color="plddt")
@@ -927,6 +951,10 @@ class ProteinHunter_Chai:
                 trial_seq = sample_seq(length, frac_X=self.percent_X / 100)
             else:
                 trial_seq = self.seq_clean
+            if self.motif_aas:
+                trial_seq = apply_fixed_motif(
+                    trial_seq, self.fixed_positions, self.motif_aas
+                )
 
             if self.viewer is not None:
                 self.viewer.new_obj()
@@ -963,6 +991,7 @@ class ProteinHunter_Chai:
                 render_freq=self.render_freq,
                 final_validation=self.repredict,
                 plot=self.plot,
+                fixed_residues=self.fixed_residue_str or None,
                 **self.opts,
             )
             X.append(x)

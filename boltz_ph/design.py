@@ -68,6 +68,19 @@ def parse_args():
     parser.add_argument("--exclude_P", action="store_true", default=False)
     parser.add_argument("--percent_X", default=90, type=int)
     parser.add_argument(
+        "--fixed_positions",
+        default="",
+        type=str,
+        help="1-indexed binder positions to keep during MPNN, e.g. '10-16,20' or 'A10 A11 A12'.",
+    )
+    parser.add_argument(
+        "--motif",
+        default="",
+        type=str,
+        help="Amino acids to place at --fixed_positions and keep during MPNN. "
+        "If omitted, residues are taken from --seq at those positions.",
+    )
+    parser.add_argument(
         "--plot",
         action="store_true",
         help="Plot cycles figs per run (requires matplotlib)",

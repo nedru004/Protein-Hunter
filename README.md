@@ -102,6 +102,19 @@ To use AlphaFold3 validation, make sure your AlphaFold3 Docker is installed, spe
   ```
   python boltz_ph/design.py --num_designs 3 --num_cycles 7 --protein_seqs AFTVTVPKDLYVVEYGSNMTIECKFPVEKQLDLAALIVYWEMEDKNIIQFVHGEEDLKVQHSSYRQRARLLKDQLSLGNAALQITDVKLQDAGVYRCMISYGGADYKRITVKVNAPYAAALE --msa_mode "mmseqs" --gpu_id 0 --name PDL1_mix_aa --min_protein_length 90 --max_protein_length 150 --high_iptm_threshold 0.7 --use_msa_for_af3 --plot --no_potentials False --contact_residues 2,3,10
   ```
+
+- **Binder design with a fixed sequence motif:**
+  Keep a functional motif in the binder during MPNN sequence design by passing 1-indexed binder positions to `--fixed_positions`. Provide the motif amino acids with `--motif`, or include them in `--seq` at those positions.
+
+  Graft a motif into a de novo binder (MPNN will not redesign those residues):
+  ```
+  python boltz_ph/design.py --num_designs 3 --num_cycles 7 --protein_seqs AFTVTVPKDLYVVEYGSNMTIECKFPVEKQLDLAALIVYWEMEDKNIIQFVHGEEDLKVQHSSYRQRARLLKDQLSLGNAALQITDVKLQDAGVYRCMISYGGADYKRITVKVNAPYAAALE --msa_mode "mmseqs" --gpu_id 0 --name PDL1_fixed_motif --percent_X 90 --min_protein_length 90 --max_protein_length 150 --motif RGD --fixed_positions 45-47 --high_iptm_threshold 0.7 --use_msa_for_af3 --plot
+  ```
+
+  Refine an existing binder sequence while keeping a motif:
+  ```
+  python boltz_ph/design.py --num_designs 2 --num_cycles 7 --seq GPDRERARELARILLKVIKLSDSPEARRQLLRNLEELAEKYKDPEVRRILEEAERYIK --protein_seqs AFTVTVPKDLYVVEYGSNMTIECKFPVEKQLDLAALIVYWEMEDKNIIQFVHGEEDLKVQHSSYRQRARLLKDQLSLGNAALQITDVKLQDAGVYRCMISYGGADYKRITVKVNAPYAAALE --msa_mode "mmseqs" --gpu_id 0 --name PDL1_motif_refiner --fixed_positions 1-10 --high_iptm_threshold 0.8 --use_msa_for_af3 --plot
+  ```
   
 - **Multimer binder design:**  
   To design a binder for a multimeric protein (e.g., a dimer), separate chain sequences using `:`
@@ -148,6 +161,11 @@ To use AlphaFold3 validation, make sure your AlphaFold3 Docker is installed, spe
   To design a binder for a specific protein target (e.g., PDL1):
   ```
   python chai_ph/design.py --jobname PDL1_binder --min_protein_length 90 --max_protein_length 150 --percent_X 80 --seq "" --target_seq AFTVTVPKDLYVVEYGSNMTIECKFPVEKQLDLAALIVYWEMEDKNIIQFVHGEEDLKVQHSSYRQRARLLKDQLSLGNAALQITDVKLQDAGVYRCMISYGGADYKRITVKVNAPYAAALE --n_trials 1 --n_cycles 5 --n_recycles 3 --n_diff_steps 200 --hysteresis_mode templates --repredict --omit_aa "" --temperature 0.1 --scale_temp_by_plddt --render_freq 100 --gpu_id 0 --use_msa_for_af3 --plot
+  ```
+
+- **Protein binder design with a fixed sequence motif:**
+  ```
+  python chai_ph/design.py --jobname PDL1_fixed_motif --min_protein_length 90 --max_protein_length 150 --percent_X 80 --seq "" --motif RGD --fixed_positions 45-47 --target_seq AFTVTVPKDLYVVEYGSNMTIECKFPVEKQLDLAALIVYWEMEDKNIIQFVHGEEDLKVQHSSYRQRARLLKDQLSLGNAALQITDVKLQDAGVYRCMISYGGADYKRITVKVNAPYAAALE --n_trials 1 --n_cycles 5 --n_recycles 3 --n_diff_steps 200 --hysteresis_mode templates --repredict --omit_aa "" --temperature 0.1 --scale_temp_by_plddt --render_freq 100 --gpu_id 0 --use_msa_for_af3 --plot
   ```
 
 - **Cyclic peptide binder design:**  
