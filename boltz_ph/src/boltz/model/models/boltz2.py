@@ -1139,13 +1139,14 @@ class Boltz2(LightningModule):
                 pred_dict["complex_iplddt"] = out["complex_iplddt"]
                 pred_dict["complex_pde"] = out["complex_pde"]
                 pred_dict["complex_ipde"] = out["complex_ipde"]
-                if self.alpha_pae > 0:
+                if "pae" in out:
                     pred_dict["pae"] = out["pae"]
-                    pred_dict["ptm"] = out["ptm"]
-                    pred_dict["iptm"] = out["iptm"]
-                    pred_dict["ligand_iptm"] = out["ligand_iptm"]
-                    pred_dict["protein_iptm"] = out["protein_iptm"]
-                    pred_dict["pair_chains_iptm"] = out["pair_chains_iptm"]
+                if self.alpha_pae > 0 or "iptm" in out:
+                    pred_dict["ptm"] = out.get("ptm")
+                    pred_dict["iptm"] = out.get("iptm")
+                    pred_dict["ligand_iptm"] = out.get("ligand_iptm")
+                    pred_dict["protein_iptm"] = out.get("protein_iptm")
+                    pred_dict["pair_chains_iptm"] = out.get("pair_chains_iptm")
             if self.affinity_prediction:
                 pred_dict["affinity_pred_value"] = out["affinity_pred_value"]
                 pred_dict["affinity_probability_binary"] = out[

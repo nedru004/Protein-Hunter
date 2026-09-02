@@ -20,6 +20,7 @@ from LigandMPNN.wrapper import (
 from boltz_ph.constants import CHAIN_TO_NUMBER
 from utils.metrics import get_CA_and_sequence # Used implicitly in design.py
 from utils.convert import calculate_holo_apo_rmsd, convert_cif_files_to_pdb
+from utils.ipsae_utils import compute_binder_ipsae, compute_binder_iptm
 
 
 from model_utils import (
@@ -329,7 +330,7 @@ class ProteinHunter_Boltz:
             "sampling_steps": self.args.diffuse_steps,
             "diffusion_samples": 1,
             "write_confidence_summary": True,
-            "write_full_pae": False,
+            "write_full_pae": True,
             "write_full_pde": False,
             "max_parallel_samples": 1,
         }
@@ -354,7 +355,26 @@ class ProteinHunter_Boltz:
         run_save_dir = os.path.join(self.protein_hunter_save_dir, f"run_{run_id}")
         os.makedirs(run_save_dir, exist_ok=True)
 
+        ligand_mode = bool(a.ligand_smiles or a.ligand_ccd)
+
+        def interface_scores(pred_output, structure_path):
+            iptm_score = compute_binder_iptm(
+                pred_output.get("pair_chains_iptm"),
+                CHAIN_TO_NUMBER[self.binder_chain],
+            )
+            if ligand_mode:
+                return iptm_score, iptm_score
+            ipsae_score = compute_binder_ipsae(
+                structure_path,
+                pred_output.get("pae"),
+                binder_chain=self.binder_chain,
+            )
+            if ipsae_score is None:
+                ipsae_score = iptm_score
+            return float(ipsae_score), iptm_score
+
         # Initialize run metrics and tracking variables
+        best_ipsae = float("-inf")
         best_iptm = float("-inf")
         best_seq = None
         best_structure = None
@@ -464,23 +484,8 @@ class ProteinHunter_Boltz:
 
         clean_memory() # <-- ADD THIS CALL HERE
         # Capture Cycle 0 metrics
-        binder_chain_idx = CHAIN_TO_NUMBER[self.binder_chain]
-        pair_chains = output["pair_chains_iptm"]
-        
-        # Calculate i-pTM
-        if len(pair_chains) > 1:
-            values = [
-                max(
-                    pair_chains[binder_chain_idx][i].detach().cpu().numpy(),
-                    pair_chains[i][binder_chain_idx].detach().cpu().numpy()
-                )
-                for i in range(len(pair_chains))
-                if i != binder_chain_idx
-            ]
-            cycle_0_iptm = float(np.mean(values) if values else 0.0)
-        else:
-            cycle_0_iptm = 0.0
-
+        cycle_0_ipsae, cycle_0_iptm = interface_scores(output, pdb_filename)
+        run_metrics["cycle_0_ipsae"] = cycle_0_ipsae
         run_metrics["cycle_0_iptm"] = cycle_0_iptm
         run_metrics["cycle_0_plddt"] = float(
             output.get("complex_plddt", torch.tensor([0.0])).detach().cpu().numpy()[0]
@@ -542,24 +547,17 @@ class ProteinHunter_Boltz:
                 device=self.device,
             )
 
-            # Calculate ipTM
-            current_chain_idx = CHAIN_TO_NUMBER[self.binder_chain]
-            pair_chains = output["pair_chains_iptm"]
-            if len(pair_chains) > 1:
-                values = [
-                    max(
-                        pair_chains[current_chain_idx][i].detach().cpu().numpy(),
-                        pair_chains[i][current_chain_idx].detach().cpu().numpy()
-                    )
-                    for i in range(len(pair_chains))
-                    if i != current_chain_idx
-                ]
-                current_iptm = float(np.mean(values) if values else 0.0)
-            else:
-                current_iptm = 0.0
+            pdb_filename = (
+                f"{run_save_dir}/{a.name}_run_{run_id}_predicted_cycle_{cycle + 1}.pdb"
+            )
+            plddts = output["plddt"].detach().cpu().numpy()[0]
+            save_pdb(structure, output["coords"], plddts, pdb_filename)
+
+            current_ipsae, current_iptm = interface_scores(output, pdb_filename)
 
             # Update best structure (only if alanine content is acceptable)
-            if alanine_percentage <= 0.20 and current_iptm > best_iptm:
+            if alanine_percentage <= 0.20 and current_ipsae > best_ipsae:
+                best_ipsae = current_ipsae
                 best_iptm = current_iptm
                 best_seq = seq
                 best_structure = copy.deepcopy(structure)
@@ -591,26 +589,24 @@ class ProteinHunter_Boltz:
                 .numpy()[0]
             )
 
+            run_metrics[f"cycle_{cycle + 1}_ipsae"] = current_ipsae
             run_metrics[f"cycle_{cycle + 1}_iptm"] = current_iptm
             run_metrics[f"cycle_{cycle + 1}_plddt"] = curr_plddt
             run_metrics[f"cycle_{cycle + 1}_iplddt"] = curr_iplddt
             run_metrics[f"cycle_{cycle + 1}_alanine"] = alanine_count
             run_metrics[f"cycle_{cycle + 1}_seq"] = seq
-
-            pdb_filename = (
-                f"{run_save_dir}/{a.name}_run_{run_id}_predicted_cycle_{cycle + 1}.pdb"
-            )
-            plddts = output["plddt"].detach().cpu().numpy()[0]
-            save_pdb(structure, output["coords"], plddts, pdb_filename)
             clean_memory()
 
             print(
-                f"ipTM: {current_iptm:.2f} pLDDT: {curr_plddt:.2f} iPLDDT: {curr_iplddt:.2f} Alanine count: {alanine_count}"
+                f"ipSAE: {current_ipsae:.2f} ipTM: {current_iptm:.2f} pLDDT: {curr_plddt:.2f} iPLDDT: {curr_iplddt:.2f} Alanine count: {alanine_count}"
             )
 
-            # 4. Save YAML for High ipTM
+            # 4. Save YAML for high-ipSAE designs
+            ipsae_threshold = getattr(a, "high_ipsae_threshold", None)
+            if ipsae_threshold is None:
+                ipsae_threshold = getattr(a, "high_iptm_threshold", 0.8)
             save_yaml_this_design = (alanine_percentage <= 0.20) and (
-                current_iptm > a.high_iptm_threshold
+                current_ipsae > ipsae_threshold
                 and curr_plddt > a.high_plddt_threshold
             )
 
@@ -629,7 +625,7 @@ class ProteinHunter_Boltz:
                     if not contact_binds:
                         save_yaml_this_design = False
                         print(
-                            "⛔️ Not saving YAML: binder failed contact check for high ipTM save."
+                            "⛔️ Not saving YAML: binder failed contact check for high ipSAE save."
                         )
                 except Exception as e:
                     print(
@@ -668,6 +664,7 @@ class ProteinHunter_Boltz:
                 metrics_dict = {
                     "run_id": run_id,
                     "cycle": cycle + 1,
+                    "ipsae": current_ipsae,
                     "iptm": current_iptm,
                     "plddt": curr_plddt,
                     "iplddt": curr_iplddt,
@@ -682,7 +679,7 @@ class ProteinHunter_Boltz:
                 
                 df_row = pd.DataFrame([metrics_dict])
                 df_row.to_csv(summary_csv_path, mode='a', header=not file_exists, index=False)
-                print(f"✅ Appended high-ipTM metrics to {summary_csv_path}")
+                print(f"✅ Appended high-ipSAE metrics to {summary_csv_path}")
         # End of cycle visualization
         if best_structure is not None and a.plot:
             plot_from_pdb(best_pdb_filename)
@@ -693,6 +690,7 @@ class ProteinHunter_Boltz:
 
         # Finalize best metrics for CSV
         if best_alanine_percentage is not None and best_alanine_percentage <= 0.20:
+            run_metrics["best_ipsae"] = float(best_ipsae)
             run_metrics["best_iptm"] = float(best_iptm)
             run_metrics["best_cycle"] = best_cycle_idx
             run_metrics["best_plddt"] = float(
@@ -703,6 +701,7 @@ class ProteinHunter_Boltz:
             )
             run_metrics["best_seq"] = best_seq
         else:
+            run_metrics["best_ipsae"] = float("nan")
             run_metrics["best_iptm"] = float("nan")
             run_metrics["best_cycle"] = None
             run_metrics["best_plddt"] = float("nan")
@@ -721,6 +720,7 @@ class ProteinHunter_Boltz:
         for i in range(a.num_cycles + 1):
             columns.extend(
                 [
+                    f"cycle_{i}_ipsae",
                     f"cycle_{i}_iptm",
                     f"cycle_{i}_plddt",
                     f"cycle_{i}_iplddt",
@@ -729,7 +729,7 @@ class ProteinHunter_Boltz:
                 ]
             )
         # Best metric columns
-        columns.extend(["best_iptm", "best_cycle", "best_plddt", "best_seq"])
+        columns.extend(["best_ipsae", "best_iptm", "best_cycle", "best_plddt", "best_seq"])
 
         summary_csv = os.path.join(self.save_dir, "summary_all_runs.csv")
         df = pd.DataFrame(all_run_metrics)

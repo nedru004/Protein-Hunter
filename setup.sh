@@ -50,7 +50,7 @@ conda install -c anaconda ipykernel -y
 # 5️⃣ Install Python dependencies
 # ------------------------------------------------------------------------------
 echo "🔧 Installing Python dependencies..."
-pip install matplotlib seaborn prody tqdm PyYAML requests pypdb py3Dmol py2Dmol logmd==0.1.45
+pip install matplotlib seaborn prody tqdm PyYAML requests pypdb py3Dmol py2Dmol logmd==0.1.45 ipsae
 pip install ml_collections
 
 # ------------------------------------------------------------------------------

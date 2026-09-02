@@ -122,7 +122,18 @@ def parse_args():
     parser.add_argument("--alanine_bias_start", default=-0.5, type=float)
     parser.add_argument("--alanine_bias_end", default=-0.1, type=float)
     parser.add_argument("--alanine_bias", action="store_true")
-    parser.add_argument("--high_iptm_threshold", default=0.8, type=float)
+    parser.add_argument(
+        "--high_ipsae_threshold",
+        default=None,
+        type=float,
+        help="Minimum ipSAE to keep a design as a high-confidence binder (default: 0.8).",
+    )
+    parser.add_argument(
+        "--high_iptm_threshold",
+        default=None,
+        type=float,
+        help="Deprecated alias for --high_ipsae_threshold.",
+    )
     parser.add_argument("--high_plddt_threshold", default=0.8, type=float)
     # --- End Existing Arguments ---
 
@@ -137,6 +148,10 @@ def print_args(args):
 
 def main():
     args = parse_args()
+    if args.high_ipsae_threshold is None:
+        args.high_ipsae_threshold = (
+            args.high_iptm_threshold if args.high_iptm_threshold is not None else 0.8
+        )
     # Pretty print each argument in a row for better visualization
     print_args(args)
     protein_hunter = ProteinHunter_Boltz(args)

@@ -11,6 +11,7 @@ from tqdm import tqdm
 
 from Bio.PDB import PDBParser, MMCIFParser, PDBIO, Selection
 from utils.metrics import get_CA_and_sequence, np_rmsd
+from utils.ipsae_utils import compute_binder_ipsae, compute_ipsae_from_files
 
 # AlphaFold3 Database Info (to be used by downstream modules)
 RNA_DATABASE_INFO = {
@@ -131,7 +132,7 @@ def convert_cif_files_to_pdb(
 ):
     """
     Convert all .cif files in results_dir to .pdb format and save in save_dir.
-    Filters by i-pTM score if high_iptm is True.
+    Filters by ipSAE (falling back to i-pTM) if high_iptm is True.
     """
     confidence_scores = []
     os.makedirs(save_dir, exist_ok=True)
@@ -164,6 +165,7 @@ def convert_cif_files_to_pdb(
                 continue
 
         iptm = float("-inf")
+        ipsae = None
         plddt = float("-inf")
         should_convert = True
 
@@ -174,10 +176,14 @@ def convert_cif_files_to_pdb(
                     base_name = file.replace("_model.cif", "")
                     confidence_file_summary = os.path.join(root, f"{base_name}_summary_confidences.json")
                     confidence_file = os.path.join(root, f"{base_name}_confidences.json")
+                    full_data_file = os.path.join(root, f"{base_name}_full_data.json")
+                    if not os.path.exists(full_data_file):
+                        full_data_file = os.path.join(root, f"{base_name}_full_data_0.json")
                 # Boltz output format
                 else:
                     confidence_file_summary = os.path.join(root, "confidence_summary.json") # Example name
                     confidence_file = os.path.join(root, "confidence_full.json") # Example name
+                    full_data_file = None
 
                 
                 # Try loading summary confidence data for ipTM
@@ -186,25 +192,37 @@ def convert_cif_files_to_pdb(
                         confidence_data = json.load(f)
                         iptm = confidence_data.get("iptm", float("-inf"))
                 
-                # Try loading full confidence data for pLDDT
+                # Try loading full confidence data for pLDDT and PAE/ipSAE
                 if os.path.exists(confidence_file):
                     with open(confidence_file) as f:
                         confidence_data = json.load(f)
                         plddt = np.mean(confidence_data.get("atom_plddts", [0.0]))
+                        if confidence_data.get("pae") is not None:
+                            ipsae = compute_binder_ipsae(
+                                cif_path, confidence_data["pae"]
+                            )
 
-                if iptm < i_ptm_cutoff:
+                if ipsae is None and full_data_file and os.path.exists(full_data_file):
+                    ipsae = compute_ipsae_from_files(full_data_file, cif_path)
+
+                rank_score = ipsae if ipsae is not None else iptm
+                if rank_score < i_ptm_cutoff:
                     should_convert = False
-                    print(f"Skipping {file}: i-pTM ({iptm:.2f}) below threshold ({i_ptm_cutoff:.2f}).")
+                    label = "ipSAE" if ipsae is not None else "i-pTM"
+                    print(f"Skipping {file}: {label} ({rank_score:.2f}) below threshold ({i_ptm_cutoff:.2f}).")
 
             except Exception as e:
                 print(f"WARNING: Could not read confidence data for {file}: {e}")
                 should_convert = True # Fail open
 
         if should_convert:
-            print(f"Converting {cif_path} (i-pTM: {iptm:.2f})...")
+            rank_score = ipsae if ipsae is not None else iptm
+            print(f"Converting {cif_path} (ipSAE: {rank_score:.2f})...")
             if convert_cif_to_pdb(cif_path, pdb_path):
                 if high_iptm:
-                    confidence_scores.append({"file": file, "iptm": iptm, "plddt": plddt})
+                    confidence_scores.append(
+                        {"file": file, "ipsae": ipsae, "iptm": iptm, "plddt": plddt}
+                    )
             else:
                 print(f"❌ Failed to convert {cif_path}.")
 

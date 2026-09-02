@@ -30,6 +30,7 @@ from LigandMPNN.wrapper import (
     apply_fixed_motif,
     resolve_mpnn_fixed_residues,
 )
+from utils.ipsae_utils import compute_binder_ipsae
 
 def optimize_protein_design(
     folder: ChaiFolder,
@@ -56,7 +57,8 @@ def optimize_protein_design(
     partial_diffusion: float = 0.0,
     pde_cutoff_intra: float = 1.5,
     pde_cutoff_inter: float = 3.0,
-    high_iptm_threshold: float = 0.8,
+    high_ipsae_threshold: Optional[float] = None,
+    high_iptm_threshold: Optional[float] = None,
     high_plddt_threshold: float = 0.8,
     omit_AA: Optional[str] = None,
     randomize_template_sequence: bool = True,
@@ -95,6 +97,8 @@ def optimize_protein_design(
         partial_diffusion: Use partial diffusion refinement
         pde_cutoff_intra: Intra-chain PDE cutoff (Å)
         pde_cutoff_inter: Inter-chain PDE cutoff (Å)
+        high_ipsae_threshold: Minimum ipSAE to keep a high-confidence binder
+        high_iptm_threshold: Deprecated alias for high_ipsae_threshold
         omit_AA: Amino acids to exclude from MPNN
         fixed_residues: LigandMPNN residue tokens to keep, e.g. 'A12 A13 A14'
         randomize_template_sequence: Randomize template sequence identity
@@ -129,6 +133,9 @@ def optimize_protein_design(
         is_ligand_target = is_smiles(target_seq)
 
     is_binder_design = target_seq is not None
+    use_ipsae_ranking = is_binder_design and not is_ligand_target
+    if high_ipsae_threshold is None:
+        high_ipsae_threshold = high_iptm_threshold if high_iptm_threshold is not None else 0.8
     mpnn_model_type = "ligand_mpnn" if is_ligand_target else "soluble_mpnn"
     target_entity_type = "ligand" if is_ligand_target else "protein"
     if is_binder_design:
@@ -396,6 +403,15 @@ def optimize_protein_design(
         pae_val = pae_metrics["pae"]
         ipae_val = pae_metrics["ipae"]
         ranking_score_val = result["ranking_score"]
+        ipsae_val = None
+        if use_ipsae_ranking and prev.get("pdb"):
+            ipsae_val = compute_binder_ipsae(
+                prev["pdb"], result["pae"], binder_chain=binder_chain
+            )
+            if ipsae_val is None:
+                ipsae_val = iptm_val
+        elif is_binder_design:
+            ipsae_val = iptm_val
 
         alanine_count = None
         if is_binder_design and "seq" in prev and prev["n_target"] is not None:
@@ -408,6 +424,7 @@ def optimize_protein_design(
             "plddt": plddt_val,
             "ptm": ptm_val, 
             "iptm": iptm_val,
+            "ipsae": ipsae_val,
             "pae": pae_val,
             "ipae": ipae_val,
             "ranking_score": ranking_score_val,
@@ -417,6 +434,8 @@ def optimize_protein_design(
             out["rmsd"] = rmsd
         msg = f"score={out['ranking_score']:.3f} plddt={out['plddt']:.1f} ptm={out['ptm']:.3f}"
         if is_binder_design:
+            if out.get("ipsae") is not None:
+                msg += f" ipsae={out['ipsae']:.3f}"
             msg += f" iptm={out['iptm']:.3f} ipae={out['ipae']:.2f} ala={out['alanine_count']}"
         else:
             msg += f" pae={out['pae']:.2f} ala={out['alanine_count']}"
@@ -433,6 +452,7 @@ def optimize_protein_design(
     # === MAIN LOOP ===
 
     iptm_per_cycle = []
+    ipsae_per_cycle = []
     plddt_per_cycle = []
     alanine_count_per_cycle = []
     ipae_per_cycle = []
@@ -455,11 +475,13 @@ def optimize_protein_design(
         )
         msg, metric_dict = format_metrics(prev)
         iptm0 = metric_dict.get("iptm") if is_binder_design else None
+        ipsae0 = metric_dict.get("ipsae") if is_binder_design else None
         plddt0 = metric_dict.get("plddt")
         alanine0 = metric_dict.get("alanine_count")
         ipae0 = metric_dict.get("ipae")
         seq0 = prev.get("seq")
         iptm_per_cycle.append(iptm0)
+        ipsae_per_cycle.append(ipsae0)
         plddt_per_cycle.append(plddt0)
         alanine_count_per_cycle.append(alanine0)
         ipae_per_cycle.append(ipae0)
@@ -475,6 +497,11 @@ def optimize_protein_design(
 
     best_step = 0
     best = copy_prev(prev)
+    best["interface_score"] = (
+        metric_dict.get("ipsae")
+        if use_ipsae_ranking and metric_dict.get("ipsae") is not None
+        else float(prev["state"].result["ranking_score"])
+    )
     for step in range(n_steps):
         try:
             if alanine_bias:
@@ -491,6 +518,7 @@ def optimize_protein_design(
                 gc.collect()
                 torch.cuda.empty_cache()
                 iptm_per_cycle.append(None if is_binder_design else None)
+                ipsae_per_cycle.append(None if is_binder_design else None)
                 plddt_per_cycle.append(None)
                 alanine_count_per_cycle.append(None)
                 ipae_per_cycle.append(None)
@@ -511,6 +539,7 @@ def optimize_protein_design(
             )
 
             iptm_per_cycle.append(metric_dict.get("iptm") if is_binder_design else None)
+            ipsae_per_cycle.append(metric_dict.get("ipsae") if is_binder_design else None)
             plddt_per_cycle.append(metric_dict.get("plddt"))
             alanine_count_per_cycle.append(metric_dict.get("alanine_count"))
             ipae_per_cycle.append(metric_dict.get("ipae"))
@@ -523,7 +552,7 @@ def optimize_protein_design(
             # --- Check and Save High-Value Designs ---
             save_yaml_this_design = (
                 is_binder_design
-                and metric_dict.get("iptm", 0.0) > high_iptm_threshold
+                and metric_dict.get("ipsae", metric_dict.get("iptm", 0.0)) > high_ipsae_threshold
                 and metric_dict.get("plddt", 0.0) > high_plddt_threshold
                 and metric_dict.get("alanine_count", 0)/len(new_seq) <= 0.2
                 and "seq" in new
@@ -574,7 +603,7 @@ def optimize_protein_design(
                 
                 with open(yaml_path, "w") as f:
                     yaml.dump({"sequences": sequences}, f)
-                print(f"✅ Saved high-ipTM YAML to {yaml_path}")
+                print(f"✅ Saved high-ipSAE YAML to {yaml_path}")
                 
                 # --- 3. Copy CIF ---
                 high_iptm_cif_dir = os.path.join(run_prefix_dir, "high_iptm_cif")
@@ -585,7 +614,7 @@ def optimize_protein_design(
                 # The source file is in new["pdb"]
                 source_cif_path = new["pdb"]
                 shutil.copy(source_cif_path, dest_cif_path)
-                print(f"✅ Copied high-ipTM CIF to {dest_cif_path}")
+                print(f"✅ Copied high-ipSAE CIF to {dest_cif_path}")
 
                 # --- 4. Append to high-ipTM summary CSV ---
                 summary_csv_path = os.path.join(run_prefix_dir, "summary_high_iptm.csv")
@@ -604,13 +633,16 @@ def optimize_protein_design(
                 file_exists = os.path.isfile(summary_csv_path)
                 df_row = pd.DataFrame([metrics_to_save])
                 df_row.to_csv(summary_csv_path, mode='a', header=not file_exists, index=False)
-                print(f"✅ Appended high-ipTM metrics to {summary_csv_path}")
+                print(f"✅ Appended high-ipSAE metrics to {summary_csv_path}")
 
-            if (
-                new["state"].result["ranking_score"]
-                > best["state"].result["ranking_score"]
-            ):
+            new_rank = (
+                metric_dict.get("ipsae")
+                if use_ipsae_ranking and metric_dict.get("ipsae") is not None
+                else new["state"].result["ranking_score"]
+            )
+            if new_rank > best.get("interface_score", best["state"].result["ranking_score"]):
                 best = copy_prev(new)
+                best["interface_score"] = new_rank
                 best_step = step + 1
 
             prev = new
@@ -618,6 +650,7 @@ def optimize_protein_design(
         except Exception as e:
             print(f"Error during optimization step {step + 1}: {e}")
             iptm_per_cycle.append(None if is_binder_design else None)
+            ipsae_per_cycle.append(None if is_binder_design else None)
             plddt_per_cycle.append(None)
             alanine_count_per_cycle.append(None)
             ipae_per_cycle.append(None)
@@ -635,6 +668,7 @@ def optimize_protein_design(
     run_id = os.path.basename(os.path.normpath(str(prefix)))
     summary_row = {"run_id": run_id}
     for cyclenum in range(len(seq_per_cycle)):
+        summary_row[f"cycle_{cyclenum}_ipsae"] = ipsae_per_cycle[cyclenum] if cyclenum < len(ipsae_per_cycle) else None
         summary_row[f"cycle_{cyclenum}_iptm"] = iptm_per_cycle[cyclenum]
         summary_row[f"cycle_{cyclenum}_plddt"] = plddt_per_cycle[cyclenum]
         summary_row[f"cycle_{cyclenum}_ipae"] = ipae_per_cycle[cyclenum]
@@ -678,11 +712,11 @@ def optimize_protein_design(
             writer.writeheader()
             writer.writerow(summary_row)
 
-    # Make metrics graphs and save (iptm, plddt, alanine count, ipae)
-    xvals = np.arange(len(iptm_per_cycle))
+    # Make metrics graphs and save (ipsae, plddt, alanine count, ipae)
+    xvals = np.arange(len(ipsae_per_cycle) if ipsae_per_cycle else len(iptm_per_cycle))
 
     if plot:
-        y_iptm = np.array([v if v is not None else np.nan for v in iptm_per_cycle])
+        y_ipsae = np.array([v if v is not None else np.nan for v in ipsae_per_cycle])
         y_plddt = np.array([v if v is not None else np.nan for v in plddt_per_cycle])
         y_ipae = np.array([v if v is not None else np.nan for v in ipae_per_cycle])
         y_alacount = np.array(
@@ -690,9 +724,9 @@ def optimize_protein_design(
         )
         fig, axs = plt.subplots(1, 4, figsize=(13, 3))
         colors = ["#9B59B6", "#FFA500", "#1F77B4", "#2ECC71"]
-        titles = ["iPTM per cycle", "pLDDT per cycle", "iPAE per cycle", "Alanine count per cycle"]
-        ylabels = ["iPTM", "pLDDT", "iPAE", "Alanine count (binder)"]
-        y_datas = [y_iptm, y_plddt, y_ipae, y_alacount]
+        titles = ["ipSAE per cycle", "pLDDT per cycle", "iPAE per cycle", "Alanine count per cycle"]
+        ylabels = ["ipSAE", "pLDDT", "iPAE", "Alanine count (binder)"]
+        y_datas = [y_ipsae, y_plddt, y_ipae, y_alacount]
 
         for i, (ax, yvals, color, title, ylabel) in enumerate(
             zip(axs, y_datas, colors, titles, ylabels)
@@ -718,7 +752,7 @@ def optimize_protein_design(
             for x, y in zip(xvals, yvals):
                 label_str = ""
                 if not np.isnan(y):
-                    if i in [0, 2]:  # iPTM or iPAE
+                    if i in [0, 2]:  # ipSAE or iPAE
                         label_str = f"{y:.3f}"
                     elif i == 1:  # pLDDT
                         label_str = f"{y:.1f}"
@@ -855,7 +889,11 @@ class ProteinHunter_Chai:
         self.hmmer_path = args.hmmer_path
         self.use_msa_for_af3 = args.use_msa_for_af3
         self.work_dir = args.work_dir
-        self.high_iptm_threshold = args.high_iptm_threshold
+        self.high_ipsae_threshold = getattr(args, "high_ipsae_threshold", None)
+        if self.high_ipsae_threshold is None:
+            self.high_ipsae_threshold = getattr(args, "high_iptm_threshold", None)
+        if self.high_ipsae_threshold is None:
+            self.high_ipsae_threshold = 0.8
         self.high_plddt_threshold = args.high_plddt_threshold
         self.plot = args.plot
         self.binder_chain = "A"
@@ -981,7 +1019,7 @@ class ProteinHunter_Chai:
                 scale_temp_by_plddt=self.scale_temp_by_plddt,
                 use_alignment=True,
                 align_to="all",
-                high_iptm_threshold=self.high_iptm_threshold,
+                high_ipsae_threshold=self.high_ipsae_threshold,
                 high_plddt_threshold=self.high_plddt_threshold,
                 randomize_template_sequence=True,
                 omit_AA=self.omit_AA,
@@ -1008,10 +1046,11 @@ class ProteinHunter_Chai:
                     x
                     and x.get("state")
                     and x["state"].result
-                    and "ranking_score" in x["state"].result
+                    and ("interface_score" in x or "ranking_score" in x["state"].result)
                 ):
-                    if x["state"].result["ranking_score"] > best_sco:
-                        best_sco = x["state"].result["ranking_score"]
+                    sco = x.get("interface_score", x["state"].result.get("ranking_score", 0))
+                    if sco > best_sco:
+                        best_sco = sco
                         best_n = n
                 else:
                     print(

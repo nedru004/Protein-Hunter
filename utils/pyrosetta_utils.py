@@ -22,6 +22,7 @@ from scipy.spatial import cKDTree
 
 from boltz_ph.constants import RESTYPE_3TO1, HYDROPHOBIC_AA
 from utils.metrics import get_CA_and_sequence, np_rmsd, radius_of_gyration
+from utils.ipsae_utils import compute_binder_ipsae
 
 # Initialize PyRosetta with all needed options
 dalphaball_path = os.path.join(
@@ -682,15 +683,20 @@ def measure_rosetta_energy(
                     interface_pae2 = np.mean(pae_matrix[protein_len:, :protein_len])
                     i_pae = (interface_pae1 + interface_pae2) / 2
                     row['i_pae'] = i_pae
+                    row['ipsae'] = compute_binder_ipsae(
+                        af_cif, pae_matrix, binder_chain=binder_holo_chain
+                    )
             except Exception:
                 row['plddt'] = None
                 row['i_pae'] = None
+                row['ipsae'] = None
             row['rg'] = rg
             row['aa_seq'] = aa_seq
         except Exception as e:
             print(f"Error adding metrics for {row.get('Model', 'unknown')}: {e}")
             row['apo_holo_rmsd'] = None
             row['iptm'] = None
+            row['ipsae'] = None
             row['plddt'] = None
             row['i_pae'] = None
             row['rg'] = None
@@ -704,27 +710,30 @@ def measure_rosetta_energy(
                 row = filtered_df.iloc[i].copy()  # Create a copy to avoid SettingWithCopyWarning
                 metrics_row = get_metrics(
                     row, pdbs_path, pdbs_apo_path, binder_holo_chain, binder_apo_chain)
-                print(
-                    f"iptm: {metrics_row.get('iptm', float('nan')):.2f}, "
-                    f"plddt: {metrics_row.get('plddt', float('nan')):.1f}, "
-                    f"rg: {metrics_row.get('rg', float('nan')):.1f}, "
-                    f"i_pae: {metrics_row.get('i_pae', float('nan')):.1f}, "
-                    f"apo_holo_rmsd: {metrics_row.get('apo_holo_rmsd', float('nan')):.1f}"
-                )
-                iptm_val = metrics_row.get('iptm', 0 if metrics_row.get('iptm') is None else metrics_row.get('iptm'))
+                ipsae_val = metrics_row.get('ipsae')
+                iptm_val = metrics_row.get('iptm')
                 plddt_val = metrics_row.get('plddt', 0 if metrics_row.get('plddt') is None else metrics_row.get('plddt'))
                 rg_val = metrics_row.get('rg', 999 if metrics_row.get('rg') is None else metrics_row.get('rg'))
                 i_pae_val = metrics_row.get('i_pae', 999 if metrics_row.get('i_pae') is None else metrics_row.get('i_pae'))
                 rmsd_val = metrics_row.get('apo_holo_rmsd', 999 if metrics_row.get('apo_holo_rmsd') is None else metrics_row.get('apo_holo_rmsd'))
-                if iptm_val > 0.5 and plddt_val > 80 and rg_val < 17 and i_pae_val < 15 and rmsd_val < 3.5:
+                rank_val = ipsae_val if ipsae_val is not None else (iptm_val if iptm_val is not None else 0)
+                print(
+                    f"ipsae: {ipsae_val if ipsae_val is not None else float('nan'):.2f}, "
+                    f"iptm: {iptm_val if iptm_val is not None else float('nan'):.2f}, "
+                    f"plddt: {plddt_val if plddt_val is not None else float('nan'):.1f}, "
+                    f"rg: {rg_val if rg_val is not None else float('nan'):.1f}, "
+                    f"i_pae: {i_pae_val if i_pae_val is not None else float('nan'):.1f}, "
+                    f"apo_holo_rmsd: {rmsd_val if rmsd_val is not None else float('nan'):.1f}"
+                )
+                if rank_val > 0.5 and plddt_val > 80 and rg_val < 17 and i_pae_val < 15 and rmsd_val < 3.5:
                     shutil.copy(Path(metrics_row['PDB']) / metrics_row['Model'], save_dir + '/' + metrics_row['Model'])
                     all_filtered_rows.append(metrics_row)
                     success_sample_num += 1
                 else:
                     fail_row = metrics_row.copy()
                     fail_row['failure_reason'] = (
-                        "Does not pass iptm/plddt/rg/i_pae/rmsd thresholds: "
-                        f"iptm={iptm_val}, plddt={plddt_val}, rg={rg_val}, i_pae={i_pae_val}, rmsd={rmsd_val}"
+                        "Does not pass ipsae/plddt/rg/i_pae/rmsd thresholds: "
+                        f"ipsae={ipsae_val}, iptm={iptm_val}, plddt={plddt_val}, rg={rg_val}, i_pae={i_pae_val}, rmsd={rmsd_val}"
                     )
                     all_failed_rows.append(fail_row)
             except Exception as e:

@@ -171,7 +171,18 @@ def parse_args():
     )
     af_group.add_argument("--use_msa_for_af3", action="store_true")
     af_group.add_argument("--work_dir", default="", type=str)
-    af_group.add_argument("--high_iptm_threshold", default=0.8, type=float)
+    af_group.add_argument(
+        "--high_ipsae_threshold",
+        default=None,
+        type=float,
+        help="Minimum ipSAE to keep a design as a high-confidence binder (default: 0.8).",
+    )
+    af_group.add_argument(
+        "--high_iptm_threshold",
+        default=None,
+        type=float,
+        help="Deprecated alias for --high_ipsae_threshold.",
+    )
     af_group.add_argument("--high_plddt_threshold", default=0.8, type=float)
     return parser.parse_args()
 
@@ -179,6 +190,10 @@ def parse_args():
 def main():
     """Main function to run the ProteinHunter pipeline."""
     args = parse_args()
+    if args.high_ipsae_threshold is None:
+        args.high_ipsae_threshold = (
+            args.high_iptm_threshold if args.high_iptm_threshold is not None else 0.8
+        )
     protein_hunter = ProteinHunter_Chai(args)
     protein_hunter.run_pipeline()
 

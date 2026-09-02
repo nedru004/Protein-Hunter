@@ -655,7 +655,7 @@ def plot_from_pdb(
 def plot_run_metrics(
     run_save_dir: str, name: str, run_id: int, num_cycles: int, run_metrics: dict
 ):
-    """Plots per-run metrics (iPTM, pLDDT, Alanine Count) over design cycles."""
+    """Plots per-run metrics (ipSAE, pLDDT, Alanine Count) over design cycles."""
     fig, axs = plt.subplots(1, 4, figsize=(16, 4)) # Increased figure width
     colors = ["#9B59B6", "#E94560", "#FF7F11", "#2ECC71"]
     
@@ -665,7 +665,7 @@ def plot_run_metrics(
         return (label, values, ymin, ymax, fmt)
 
     metrics_list = [
-        get_metric_data("iptm", "iPTM", 0, 1, "{:.3f}"),
+        get_metric_data("ipsae", "ipSAE", 0, 1, "{:.3f}"),
         get_metric_data("plddt", "pLDDT", 0, 1, "{:.1f}"), # Corrected pLDDT max to 100
         get_metric_data("iplddt", "iPLDDT", 0, 1, "{:.1f}"), # Corrected iPLDDT max to 100
         get_metric_data(
